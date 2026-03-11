@@ -12,39 +12,53 @@ export default async function handler(req, res) {
         .json({ error: "Missing REMOVE_BG_API_KEY environment variable." });
     }
 
-    const { imageUrl } = req.body || {};
+    const { imageBase64, mimeType } = req.body || {};
 
-    if (!imageUrl) {
-      return res.status(400).json({ error: "Missing imageUrl." });
+    if (!imageBase64) {
+      return res.status(400).json({ error: "Missing imageBase64." });
     }
+
+    const safeMimeType = mimeType || "image/jpeg";
+    const extension = safeMimeType.includes("png") ? "png" : "jpg";
+
+    const cleanBase64 = String(imageBase64).replace(
+      /^data:image\/[a-zA-Z0-9.+-]+;base64,/,
+      ""
+    );
+
+    const imageBuffer = Buffer.from(cleanBase64, "base64");
+    const imageBlob = new Blob([imageBuffer], { type: safeMimeType });
+
+    const formData = new FormData();
+    formData.append("size", "auto");
+    formData.append("image_file", imageBlob, `wardrobe-item.${extension}`);
 
     const response = await fetch("https://api.remove.bg/v1.0/removebg", {
       method: "POST",
       headers: {
         "X-Api-Key": apiKey,
-        "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        image_url: imageUrl,
-        size: "auto",
-      }),
+      body: formData,
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      return res.status(500).json({ error });
+      const errorText = await response.text();
+      return res.status(500).json({
+        error: "remove.bg request failed",
+        details: errorText,
+      });
     }
 
-    const buffer = await response.arrayBuffer();
-    const base64 = Buffer.from(buffer).toString("base64");
+    const resultArrayBuffer = await response.arrayBuffer();
+    const resultBase64 = Buffer.from(resultArrayBuffer).toString("base64");
 
     return res.status(200).json({
-      imageUrl: `data:image/png;base64,${base64}`,
+      imageUrl: `data:image/png;base64,${resultBase64}`,
     });
   } catch (error) {
     return res.status(500).json({
       error: "Server error",
-      details: error.message,
+      details: error?.message || "Unknown error",
     });
   }
 }
