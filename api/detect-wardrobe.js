@@ -21,107 +21,6 @@ const ALLOWED_COLORS = [
   "grey",
 ];
 
-function normalizeColor(value = "") {
-  const normalized = String(value || "").trim().toLowerCase();
-
-  if (!normalized) return "neutral";
-
-  if (ALLOWED_COLORS.includes(normalized)) {
-    return normalized;
-  }
-
-  if (
-    normalized.includes("blue") ||
-    normalized.includes("navy") ||
-    normalized.includes("sky") ||
-    normalized.includes("baby blue") ||
-    normalized.includes("powder blue") ||
-    normalized.includes("denim")
-  ) {
-    return "blue";
-  }
-
-  if (
-    normalized.includes("green") ||
-    normalized.includes("olive") ||
-    normalized.includes("sage") ||
-    normalized.includes("mint")
-  ) {
-    return "green";
-  }
-
-  if (
-    normalized.includes("red") ||
-    normalized.includes("burgundy") ||
-    normalized.includes("maroon") ||
-    normalized.includes("wine")
-  ) {
-    return "red";
-  }
-
-  if (
-    normalized.includes("pink") ||
-    normalized.includes("rose") ||
-    normalized.includes("blush")
-  ) {
-    return "pink";
-  }
-
-  if (
-    normalized.includes("purple") ||
-    normalized.includes("lavender") ||
-    normalized.includes("lilac") ||
-    normalized.includes("violet")
-  ) {
-    return "purple";
-  }
-
-  if (
-    normalized.includes("brown") ||
-    normalized.includes("tan") ||
-    normalized.includes("camel") ||
-    normalized.includes("mocha")
-  ) {
-    return "brown";
-  }
-
-  if (
-    normalized.includes("grey") ||
-    normalized.includes("gray") ||
-    normalized.includes("charcoal")
-  ) {
-    return "grey";
-  }
-
-  if (normalized.includes("white")) {
-    return "white";
-  }
-
-  if (
-    normalized.includes("cream") ||
-    normalized.includes("ivory") ||
-    normalized.includes("off white") ||
-    normalized.includes("off-white")
-  ) {
-    return "cream";
-  }
-
-  if (normalized.includes("black")) {
-    return "black";
-  }
-
-  if (
-    normalized.includes("neutral") ||
-    normalized.includes("beige") ||
-    normalized.includes("stone") ||
-    normalized.includes("taupe")
-  ) {
-    return "neutral";
-  }
-
-  return "neutral";
-}
-
 function normalizeCategory(value = "") {
   const normalized = String(value || "").trim().toLowerCase();
 
@@ -130,57 +29,135 @@ function normalizeCategory(value = "") {
   }
 
   if (
-    normalized.includes("shirt") ||
-    normalized.includes("top") ||
-    normalized.includes("t-shirt") ||
-    normalized.includes("tshirt") ||
-    normalized.includes("blouse")
+    ["shirt", "tshirt", "t-shirt", "tee", "blouse", "top", "sweater"].includes(
+      normalized
+    )
   ) {
     return "top";
   }
 
   if (
-    normalized.includes("pant") ||
-    normalized.includes("trouser") ||
-    normalized.includes("jean") ||
-    normalized.includes("bottom") ||
-    normalized.includes("skirt")
+    ["pants", "trousers", "jeans", "skirt", "shorts", "bottom"].includes(
+      normalized
+    )
   ) {
     return "bottom";
   }
 
-  if (normalized.includes("dress")) {
-    return "dress";
-  }
-
-  if (
-    normalized.includes("shoe") ||
-    normalized.includes("sneaker") ||
-    normalized.includes("boot") ||
-    normalized.includes("heel")
-  ) {
-    return "shoes";
-  }
-
-  if (
-    normalized.includes("jacket") ||
-    normalized.includes("coat") ||
-    normalized.includes("blazer") ||
-    normalized.includes("hoodie")
-  ) {
+  if (["coat", "blazer", "hoodie", "cardigan", "jacket"].includes(normalized)) {
     return "jacket";
   }
 
-  if (
-    normalized.includes("bag") ||
-    normalized.includes("belt") ||
-    normalized.includes("hat") ||
-    normalized.includes("accessory")
-  ) {
+  if (["heels", "boots", "sandals", "sneakers", "shoes"].includes(normalized)) {
+    return "shoes";
+  }
+
+  if (["bag", "hat", "belt", "jewelry", "jewellery", "accessory"].includes(normalized)) {
     return "accessory";
   }
 
   return "top";
+}
+
+function normalizeColor(value = "") {
+  const normalized = String(value || "").trim().toLowerCase();
+
+  if (ALLOWED_COLORS.includes(normalized)) {
+    return normalized;
+  }
+
+  if (normalized.includes("navy")) return "blue";
+  if (normalized.includes("light blue")) return "blue";
+  if (normalized.includes("sky blue")) return "blue";
+  if (normalized.includes("dark blue")) return "blue";
+  if (normalized.includes("blue")) return "blue";
+
+  if (normalized.includes("gray")) return "grey";
+  if (normalized.includes("grey")) return "grey";
+
+  if (normalized.includes("beige")) return "cream";
+  if (normalized.includes("ivory")) return "cream";
+  if (normalized.includes("off-white")) return "cream";
+  if (normalized.includes("off white")) return "cream";
+  if (normalized.includes("cream")) return "cream";
+
+  if (normalized.includes("black")) return "black";
+  if (normalized.includes("white")) return "white";
+  if (normalized.includes("green")) return "green";
+  if (normalized.includes("red")) return "red";
+  if (normalized.includes("pink")) return "pink";
+  if (normalized.includes("brown")) return "brown";
+  if (normalized.includes("purple")) return "purple";
+
+  return "neutral";
+}
+
+function normalizeAlternatives(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => normalizeCategory(item))
+    .filter((item, index, arr) => arr.indexOf(item) === index)
+    .slice(0, 3);
+}
+
+function extractTextFromResponsesApi(data) {
+  if (!data) return "";
+
+  if (typeof data.output_text === "string" && data.output_text.trim()) {
+    return data.output_text.trim();
+  }
+
+  if (Array.isArray(data.output)) {
+    const parts = [];
+
+    for (const item of data.output) {
+      if (!item || !Array.isArray(item.content)) continue;
+
+      for (const contentItem of item.content) {
+        if (
+          contentItem &&
+          contentItem.type === "output_text" &&
+          typeof contentItem.text === "string"
+        ) {
+          parts.push(contentItem.text);
+        }
+      }
+    }
+
+    if (parts.length > 0) {
+      return parts.join("\n").trim();
+    }
+  }
+
+  return "";
+}
+
+function extractJsonObject(text = "") {
+  const trimmed = String(text || "").trim();
+
+  if (!trimmed) return null;
+
+  try {
+    return JSON.parse(trimmed);
+  } catch {}
+
+  const firstBrace = trimmed.indexOf("{");
+  const lastBrace = trimmed.lastIndexOf("}");
+
+  if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
+    return null;
+  }
+
+  const possibleJson = trimmed.slice(firstBrace, lastBrace + 1);
+
+  try {
+    return JSON.parse(possibleJson);
+  } catch {
+    return null;
+  }
 }
 
 export default async function handler(req, res) {
@@ -193,108 +170,151 @@ export default async function handler(req, res) {
 
     if (!apiKey) {
       return res.status(500).json({
-        error: "Missing OPENAI_API_KEY environment variable",
+        error: "Missing OPENAI_API_KEY environment variable.",
       });
     }
 
-    const { imageBase64, mimeType } = req.body || {};
+    const { imageBase64, mimeType, fileName } = req.body || {};
 
     if (!imageBase64) {
-      return res.status(400).json({
-        error: "Missing imageBase64",
+      return res.status(400).json({ error: "Missing imageBase64." });
+    }
+
+    const safeMimeType =
+      typeof mimeType === "string" && mimeType.trim()
+        ? mimeType
+        : "image/jpeg";
+
+    const prompt = `
+You are a fashion wardrobe detector.
+
+Analyze the clothing item in this image.
+Focus on the MAIN garment only.
+Ignore the background as much as possible.
+Ignore shadows, floor, wall, skin, hangers, hands, and lighting casts.
+If the item is blue, return blue, not neutral.
+
+Return ONLY valid JSON with this exact shape:
+{
+  "suggestedCategory": "top",
+  "suggestedColor": "blue",
+  "suggestedStyleNote": "blue casual t-shirt",
+  "confidenceLabel": "High confidence",
+  "reasons": [
+    "reason 1",
+    "reason 2"
+  ],
+  "alternativeCategories": ["top", "jacket"]
+}
+
+Rules:
+- suggestedCategory must be one of: top, bottom, dress, shoes, jacket, accessory
+- suggestedColor must be one of: neutral, black, white, cream, blue, green, red, pink, brown, purple, grey
+- alternativeCategories must contain only allowed categories
+- confidenceLabel should be one of: High confidence, Medium confidence, Low confidence
+- Return JSON only. No markdown. No explanation outside JSON.
+`;
+
+    const openAiResponse = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-4.1-mini",
+        input: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: prompt,
+              },
+              {
+                type: "input_image",
+                image_url: `data:${safeMimeType};base64,${imageBase64}`,
+              },
+            ],
+          },
+        ],
+        max_output_tokens: 500,
+      }),
+    });
+
+    const rawOpenAiText = await openAiResponse.text();
+
+    if (!openAiResponse.ok) {
+      return res.status(500).json({
+        error: "OpenAI request failed",
+        details: rawOpenAiText,
       });
     }
 
-    const safeMime = mimeType || "image/jpeg";
+    let openAiData = null;
 
-    const imageUrl = `data:${safeMime};base64,${String(imageBase64).replace(
-      /^data:image\/[a-zA-Z0-9.+-]+;base64,/,
-      ""
-    )}`;
+    try {
+      openAiData = JSON.parse(rawOpenAiText);
+    } catch {
+      return res.status(500).json({
+        error: "Could not parse OpenAI response JSON",
+        details: rawOpenAiText,
+      });
+    }
 
-    const prompt = `
-You are a wardrobe AI assistant.
-
-Analyze the clothing item in the image.
-
-Ignore the background completely.
-Focus only on the garment itself.
-
-Return JSON ONLY with this format:
-
-{
-"suggestedCategory": "top | bottom | dress | shoes | jacket | accessory",
-"suggestedColor": "neutral | black | white | cream | blue | green | red | pink | brown | purple | grey",
-"suggestedStyleNote": "short fashion description",
-"confidenceLabel": "High confidence | Medium confidence | Low confidence",
-"reasons": ["reason 1", "reason 2"],
-"alternativeCategories": ["top"]
-}
-
-Important color rule:
-If the item is navy, sky blue, baby blue, denim, powder blue or any blue shade → return "blue".
-`;
-
-    const openaiResponse = await fetch(
-      "https://api.openai.com/v1/responses",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: "gpt-4.1",
-          input: [
-            {
-              role: "user",
-              content: [
-                {
-                  type: "input_text",
-                  text: prompt,
-                },
-                {
-                  type: "input_image",
-                  image_url: imageUrl,
-                },
-              ],
-            },
-          ],
-        }),
-      }
-    );
-
-    const data = await openaiResponse.json();
-
-    const outputText =
-      data.output_text ||
-      data.output?.[0]?.content?.[0]?.text ||
-      "";
+    const outputText = extractTextFromResponsesApi(openAiData);
 
     if (!outputText) {
       return res.status(500).json({
         error: "OpenAI returned no output",
+        details: openAiData,
       });
     }
 
-    let parsed;
+    const parsed = extractJsonObject(outputText);
 
-    try {
-      parsed = JSON.parse(outputText);
-    } catch {
+    if (!parsed) {
       return res.status(500).json({
-        error: "Invalid JSON returned by OpenAI",
+        error: "OpenAI did not return valid JSON",
         details: outputText,
       });
     }
 
+    const suggestedCategory = normalizeCategory(parsed.suggestedCategory);
+    const suggestedColor = normalizeColor(parsed.suggestedColor);
+    const suggestedStyleNote =
+      typeof parsed.suggestedStyleNote === "string"
+        ? parsed.suggestedStyleNote.trim()
+        : "";
+
+    const confidenceLabel =
+      typeof parsed.confidenceLabel === "string" &&
+      parsed.confidenceLabel.trim()
+        ? parsed.confidenceLabel.trim()
+        : "Medium confidence";
+
+    const reasons =
+      Array.isArray(parsed.reasons) && parsed.reasons.length > 0
+        ? parsed.reasons.map((item) => String(item))
+        : [
+            `Detected category: ${suggestedCategory}`,
+            `Detected color: ${suggestedColor}`,
+          ];
+
+    const alternativeCategories = normalizeAlternatives(
+      parsed.alternativeCategories
+    );
+
     return res.status(200).json({
-      suggestedCategory: normalizeCategory(parsed.suggestedCategory),
-      suggestedColor: normalizeColor(parsed.suggestedColor),
-      suggestedStyleNote: parsed.suggestedStyleNote || "",
-      confidenceLabel: parsed.confidenceLabel || "Medium confidence",
-      reasons: parsed.reasons || [],
-      alternativeCategories: parsed.alternativeCategories || ["top"],
+      suggestedCategory,
+      suggestedColor,
+      suggestedStyleNote,
+      confidenceLabel,
+      reasons,
+      alternativeCategories:
+        alternativeCategories.length > 0
+          ? alternativeCategories
+          : ["top", "jacket"],
     });
   } catch (error) {
     return res.status(500).json({
