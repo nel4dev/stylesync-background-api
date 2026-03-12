@@ -1,3 +1,188 @@
+const ALLOWED_CATEGORIES = [
+  "top",
+  "bottom",
+  "dress",
+  "shoes",
+  "jacket",
+  "accessory",
+];
+
+const ALLOWED_COLORS = [
+  "neutral",
+  "black",
+  "white",
+  "cream",
+  "blue",
+  "green",
+  "red",
+  "pink",
+  "brown",
+  "purple",
+  "grey",
+];
+
+function normalizeColor(value = "") {
+  const normalized = String(value || "").trim().toLowerCase();
+
+  if (!normalized) return "neutral";
+
+  if (ALLOWED_COLORS.includes(normalized)) {
+    return normalized;
+  }
+
+  if (
+    normalized.includes("blue") ||
+    normalized.includes("navy") ||
+    normalized.includes("sky") ||
+    normalized.includes("baby blue") ||
+    normalized.includes("powder blue") ||
+    normalized.includes("denim")
+  ) {
+    return "blue";
+  }
+
+  if (
+    normalized.includes("green") ||
+    normalized.includes("olive") ||
+    normalized.includes("sage") ||
+    normalized.includes("mint")
+  ) {
+    return "green";
+  }
+
+  if (
+    normalized.includes("red") ||
+    normalized.includes("burgundy") ||
+    normalized.includes("maroon") ||
+    normalized.includes("wine")
+  ) {
+    return "red";
+  }
+
+  if (
+    normalized.includes("pink") ||
+    normalized.includes("rose") ||
+    normalized.includes("blush")
+  ) {
+    return "pink";
+  }
+
+  if (
+    normalized.includes("purple") ||
+    normalized.includes("lavender") ||
+    normalized.includes("lilac") ||
+    normalized.includes("violet")
+  ) {
+    return "purple";
+  }
+
+  if (
+    normalized.includes("brown") ||
+    normalized.includes("tan") ||
+    normalized.includes("camel") ||
+    normalized.includes("mocha")
+  ) {
+    return "brown";
+  }
+
+  if (
+    normalized.includes("grey") ||
+    normalized.includes("gray") ||
+    normalized.includes("charcoal")
+  ) {
+    return "grey";
+  }
+
+  if (normalized.includes("white")) {
+    return "white";
+  }
+
+  if (
+    normalized.includes("cream") ||
+    normalized.includes("ivory") ||
+    normalized.includes("off white") ||
+    normalized.includes("off-white")
+  ) {
+    return "cream";
+  }
+
+  if (normalized.includes("black")) {
+    return "black";
+  }
+
+  if (
+    normalized.includes("neutral") ||
+    normalized.includes("beige") ||
+    normalized.includes("stone") ||
+    normalized.includes("taupe")
+  ) {
+    return "neutral";
+  }
+
+  return "neutral";
+}
+
+function normalizeCategory(value = "") {
+  const normalized = String(value || "").trim().toLowerCase();
+
+  if (ALLOWED_CATEGORIES.includes(normalized)) {
+    return normalized;
+  }
+
+  if (
+    normalized.includes("shirt") ||
+    normalized.includes("top") ||
+    normalized.includes("t-shirt") ||
+    normalized.includes("tshirt") ||
+    normalized.includes("blouse")
+  ) {
+    return "top";
+  }
+
+  if (
+    normalized.includes("pant") ||
+    normalized.includes("trouser") ||
+    normalized.includes("jean") ||
+    normalized.includes("bottom") ||
+    normalized.includes("skirt")
+  ) {
+    return "bottom";
+  }
+
+  if (normalized.includes("dress")) {
+    return "dress";
+  }
+
+  if (
+    normalized.includes("shoe") ||
+    normalized.includes("sneaker") ||
+    normalized.includes("boot") ||
+    normalized.includes("heel")
+  ) {
+    return "shoes";
+  }
+
+  if (
+    normalized.includes("jacket") ||
+    normalized.includes("coat") ||
+    normalized.includes("blazer") ||
+    normalized.includes("hoodie")
+  ) {
+    return "jacket";
+  }
+
+  if (
+    normalized.includes("bag") ||
+    normalized.includes("belt") ||
+    normalized.includes("hat") ||
+    normalized.includes("accessory")
+  ) {
+    return "accessory";
+  }
+
+  return "top";
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
@@ -8,7 +193,7 @@ export default async function handler(req, res) {
 
     if (!apiKey) {
       return res.status(500).json({
-        error: "Missing OPENAI_API_KEY environment variable.",
+        error: "Missing OPENAI_API_KEY environment variable",
       });
     }
 
@@ -16,99 +201,79 @@ export default async function handler(req, res) {
 
     if (!imageBase64) {
       return res.status(400).json({
-        error: "Missing imageBase64.",
+        error: "Missing imageBase64",
       });
     }
 
-    const safeMimeType = mimeType || "image/jpeg";
-    const dataUrl = `data:${safeMimeType};base64,${String(imageBase64).replace(
+    const safeMime = mimeType || "image/jpeg";
+
+    const imageUrl = `data:${safeMime};base64,${String(imageBase64).replace(
       /^data:image\/[a-zA-Z0-9.+-]+;base64,/,
       ""
     )}`;
 
     const prompt = `
-You are a wardrobe-analysis assistant for a fashion app.
+You are a wardrobe AI assistant.
 
-Analyze ONLY the clothing item in the image.
+Analyze the clothing item in the image.
+
 Ignore the background completely.
-If the image has transparent background, focus only on the visible garment.
-Do not describe the model, person, hands, floor, wall, hanger, or lighting.
-Pick the actual dominant garment color, not "neutral" unless the item itself is truly beige/taupe/tan/cream-neutral.
+Focus only on the garment itself.
 
-Return ONLY valid JSON with this exact shape:
+Return JSON ONLY with this format:
+
 {
-  "suggestedCategory": "top" | "bottom" | "dress" | "shoes" | "jacket" | "accessory",
-  "suggestedColor": string,
-  "suggestedStyleNote": string,
-  "confidenceLabel": string,
-  "reasons": string[],
-  "alternativeCategories": string[]
+"suggestedCategory": "top | bottom | dress | shoes | jacket | accessory",
+"suggestedColor": "neutral | black | white | cream | blue | green | red | pink | brown | purple | grey",
+"suggestedStyleNote": "short fashion description",
+"confidenceLabel": "High confidence | Medium confidence | Low confidence",
+"reasons": ["reason 1", "reason 2"],
+"alternativeCategories": ["top"]
 }
 
-Rules:
-- suggestedCategory must be one of: top, bottom, dress, shoes, jacket, accessory
-- suggestedColor should be a simple clothing color like:
-  black, white, cream, grey, blue, navy, light blue, green, olive, red, burgundy, pink, brown, beige, tan, purple, yellow, orange
-- suggestedStyleNote should be short and fashion-focused, like:
-  "casual cotton t-shirt", "blue denim jeans", "minimal white sneakers"
-- confidenceLabel should be one of:
-  "High confidence", "Medium confidence", "Low confidence"
-- reasons should be 2 to 4 short bullet-style reasons
-- alternativeCategories should contain 1 to 3 options from the allowed category list
-- If it is clearly a t-shirt, choose "top"
-- If it is clearly jeans or trousers, choose "bottom"
-- If it is clearly outerwear, choose "jacket"
-- If it is clearly footwear, choose "shoes"
-- Do not output markdown
-- Do not output explanation text outside JSON
+Important color rule:
+If the item is navy, sky blue, baby blue, denim, powder blue or any blue shade → return "blue".
 `;
 
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "gpt-5.4",
-        input: [
-          {
-            role: "user",
-            content: [
-              {
-                type: "input_text",
-                text: prompt,
-              },
-              {
-                type: "input_image",
-                image_url: dataUrl,
-                detail: "high",
-              },
-            ],
-          },
-        ],
-      }),
-    });
+    const openaiResponse = await fetch(
+      "https://api.openai.com/v1/responses",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: "gpt-4.1",
+          input: [
+            {
+              role: "user",
+              content: [
+                {
+                  type: "input_text",
+                  text: prompt,
+                },
+                {
+                  type: "input_image",
+                  image_url: imageUrl,
+                },
+              ],
+            },
+          ],
+        }),
+      }
+    );
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      return res.status(500).json({
-        error: "OpenAI request failed",
-        details: errorText,
-      });
-    }
-
-    const data = await response.json();
+    const data = await openaiResponse.json();
 
     const outputText =
       data.output_text ||
-      data.output?.flatMap((item) => item.content || []).find((item) => item.type === "output_text")?.text ||
+      data.output?.[0]?.content?.[0]?.text ||
       "";
 
     if (!outputText) {
       return res.status(500).json({
-        error: "No analysis text returned from OpenAI.",
-        details: data,
+        error: "OpenAI returned no output",
       });
     }
 
@@ -116,42 +281,20 @@ Rules:
 
     try {
       parsed = JSON.parse(outputText);
-    } catch (parseError) {
+    } catch {
       return res.status(500).json({
-        error: "OpenAI returned invalid JSON.",
+        error: "Invalid JSON returned by OpenAI",
         details: outputText,
       });
     }
 
-    const allowedCategories = [
-      "top",
-      "bottom",
-      "dress",
-      "shoes",
-      "jacket",
-      "accessory",
-    ];
-
-    const normalizedCategory = allowedCategories.includes(parsed?.suggestedCategory)
-      ? parsed.suggestedCategory
-      : "top";
-
-    const normalizedAlternatives = Array.isArray(parsed?.alternativeCategories)
-      ? parsed.alternativeCategories.filter((item) =>
-          allowedCategories.includes(item)
-        ).slice(0, 3)
-      : [];
-
     return res.status(200).json({
-      suggestedCategory: normalizedCategory,
-      suggestedColor: parsed?.suggestedColor || "neutral",
-      suggestedStyleNote: parsed?.suggestedStyleNote || "",
-      confidenceLabel: parsed?.confidenceLabel || "Medium confidence",
-      reasons: Array.isArray(parsed?.reasons)
-        ? parsed.reasons.slice(0, 4)
-        : ["The garment shape and visible details were analyzed."],
-      alternativeCategories:
-        normalizedAlternatives.length > 0 ? normalizedAlternatives : ["top"],
+      suggestedCategory: normalizeCategory(parsed.suggestedCategory),
+      suggestedColor: normalizeColor(parsed.suggestedColor),
+      suggestedStyleNote: parsed.suggestedStyleNote || "",
+      confidenceLabel: parsed.confidenceLabel || "Medium confidence",
+      reasons: parsed.reasons || [],
+      alternativeCategories: parsed.alternativeCategories || ["top"],
     });
   } catch (error) {
     return res.status(500).json({
