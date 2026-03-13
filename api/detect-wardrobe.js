@@ -1,7 +1,17 @@
-const DAILY_LIMIT = 10;
-const requestStore = new Map();
+const OPENAI_API_URL = "https://api.openai.com/v1/responses";
 
-const ALLOWED_CATEGORIES = [
+const FREE_DAILY_LIMIT = 10;
+const PRO_DAILY_LIMIT = 1000;
+
+/**
+ * Local fallback only.
+ * This is useful during local development if KV is not configured.
+ * On real Vercel production deployments, you should configure KV so limits persist.
+ */
+const memoryStore = global.__stylesyncDetectionStore || new Map();
+global.__stylesyncDetectionStore = memoryStore;
+
+const VALID_CATEGORIES = [
   "top",
   "bottom",
   "dress",
@@ -10,46 +20,13 @@ const ALLOWED_CATEGORIES = [
   "accessory",
 ];
 
-const ALLOWED_COLORS = [
-  "neutral",
-  "black",
-  "white",
-  "cream",
-  "blue",
-  "green",
-  "red",
-  "pink",
-  "brown",
-  "purple",
-  "grey",
-];
-
-function normalizeValue(value = "") {
-  return String(value || "").trim().toLowerCase();
-}
-
-function normalizeCategory(value = "") {
-  const normalized = normalizeValue(value);
-  return ALLOWED_CATEGORIES.includes(normalized) ? normalized : "top";
-}
-
-function normalizeColor(value = "") {
-  const normalized = normalizeValue(value);
-  return ALLOWED_COLORS.includes(normalized) ? normalized : "neutral";
-}
-
-function normalizeStringArray(value) {
-  if (!Array.isArray(value)) return [];
-  return value.map((item) => String(item)).filter(Boolean);
-}
-
-function getUserId(req, bodyUserId) {
-  return (
-    bodyUserId ||
-    req.headers["x-user-id"] ||
-    req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
-    req.socket?.remoteAddress ||
-    "free-user"
+function setCorsHeaders(res) {
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization"
   );
 }
 
@@ -57,51 +34,255 @@ function getTodayKey() {
   return new Date().toISOString().slice(0, 10);
 }
 
-function isRateLimited(userId) {
-  const today = getTodayKey();
-  const entry = requestStore.get(userId);
+function getSecondsUntilNextUtcMidnight() {
+  const now = new Date();
+  const next = new Date(now);
+  next.setUTCDate(now.getUTCDate() + 1);
+  next.setUTCHours(0, 0, 0, 0);
 
-  if (!entry || entry.date !== today) {
-    requestStore.set(userId, { count: 1, date: today });
-    return false;
-  }
-
-  if (entry.count >= DAILY_LIMIT) {
-    return true;
-  }
-
-  entry.count += 1;
-  return false;
+  return Math.max(60, Math.floor((next.getTime() - now.getTime()) / 1000));
 }
 
-function getRemainingRequests(userId) {
-  const today = getTodayKey();
-  const entry = requestStore.get(userId);
-
-  if (!entry || entry.date !== today) {
-    return DAILY_LIMIT;
-  }
-
-  return Math.max(0, DAILY_LIMIT - entry.count);
+function normalizeUserId(userId) {
+  return String(userId || "").trim();
 }
 
-function extractTextFromResponse(data) {
-  if (typeof data?.output_text === "string" && data.output_text.trim()) {
-    return data.output_text.trim();
+function getProUserIds() {
+  return String(process.env.PRO_USER_IDS || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function getUserPlan(userId) {
+  const proUserIds = getProUserIds();
+
+  if (proUserIds.includes(userId)) {
+    return "pro";
   }
 
-  if (Array.isArray(data?.output)) {
-    for (const item of data.output) {
-      if (!Array.isArray(item?.content)) continue;
+  return "free";
+}
 
-      for (const contentItem of item.content) {
-        if (
-          contentItem?.type === "output_text" &&
-          typeof contentItem?.text === "string" &&
-          contentItem.text.trim()
-        ) {
-          return contentItem.text.trim();
-        }
+function getPlanLimit(plan) {
+  if (plan === "pro") {
+    return PRO_DAILY_LIMIT;
+  }
+
+  return FREE_DAILY_LIMIT;
+}
+
+function getUsageKey(userId, dateKey) {
+  return `wardrobe-detect:${userId}:${dateKey}`;
+}
+
+async function getKvClient() {
+  try {
+    const mod = await import("@vercel/kv");
+    return mod.kv || mod.default || null;
+  } catch (error) {
+    return null;
+  }
+}
+
+async function getUsageCount(userId, dateKey) {
+  const key = getUsageKey(userId, dateKey);
+  const kv = await getKvClient();
+
+  if (kv) {
+    const value = await kv.get(key);
+    const parsed = Number(value || 0);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  const value = memoryStore.get(key);
+  const parsed = Number(value || 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+async function setUsageCount(userId, dateKey, count) {
+  const key = getUsageKey(userId, dateKey);
+  const secondsUntilReset = getSecondsUntilNextUtcMidnight();
+  const kv = await getKvClient();
+
+  if (kv) {
+    await kv.set(key, count, { ex: secondsUntilReset });
+    return;
+  }
+
+  memoryStore.set(key, count);
+}
+
+async function incrementUsageCount(userId, dateKey) {
+  const current = await getUsageCount(userId, dateKey);
+  const next = current + 1;
+  await setUsageCount(userId, dateKey, next);
+  return next;
+}
+
+function normalizeCategory(value) {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+
+  if (VALID_CATEGORIES.includes(normalized)) {
+    return normalized;
+  }
+
+  if (
+    normalized.includes("shirt") ||
+    normalized.includes("tee") ||
+    normalized.includes("blouse") ||
+    normalized.includes("sweater") ||
+    normalized.includes("knit") ||
+    normalized.includes("tank")
+  ) {
+    return "top";
+  }
+
+  if (
+    normalized.includes("pants") ||
+    normalized.includes("trouser") ||
+    normalized.includes("jean") ||
+    normalized.includes("skirt") ||
+    normalized.includes("short")
+  ) {
+    return "bottom";
+  }
+
+  if (normalized.includes("dress")) {
+    return "dress";
+  }
+
+  if (
+    normalized.includes("shoe") ||
+    normalized.includes("boot") ||
+    normalized.includes("sneaker") ||
+    normalized.includes("heel") ||
+    normalized.includes("loafer") ||
+    normalized.includes("sandal")
+  ) {
+    return "shoes";
+  }
+
+  if (
+    normalized.includes("jacket") ||
+    normalized.includes("coat") ||
+    normalized.includes("blazer") ||
+    normalized.includes("cardigan") ||
+    normalized.includes("outerwear")
+  ) {
+    return "jacket";
+  }
+
+  if (
+    normalized.includes("bag") ||
+    normalized.includes("belt") ||
+    normalized.includes("hat") ||
+    normalized.includes("scarf") ||
+    normalized.includes("jewelry") ||
+    normalized.includes("accessory")
+  ) {
+    return "accessory";
+  }
+
+  return "top";
+}
+
+function normalizeAlternativeCategories(value, mainCategory) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const cleaned = value
+    .map((item) => normalizeCategory(item))
+    .filter((item) => item && item !== mainCategory);
+
+  return [...new Set(cleaned)].slice(0, 3);
+}
+
+function normalizeReasons(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .slice(0, 4);
+}
+
+function normalizeConfidenceLabel(value) {
+  const normalized = String(value || "").trim();
+
+  if (!normalized) {
+    return "Medium confidence";
+  }
+
+  return normalized;
+}
+
+function normalizeColor(value) {
+  const normalized = String(value || "").trim();
+
+  if (!normalized) {
+    return "neutral";
+  }
+
+  return normalized;
+}
+
+function normalizeStyleNote(value) {
+  return String(value || "").trim();
+}
+
+function safeJsonParse(text) {
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    return null;
+  }
+}
+
+function extractJsonObject(text) {
+  if (!text) return null;
+
+  const direct = safeJsonParse(text);
+  if (direct) return direct;
+
+  const fencedMatch = text.match(/```json\s*([\s\S]*?)\s*```/i);
+  if (fencedMatch?.[1]) {
+    const parsed = safeJsonParse(fencedMatch[1]);
+    if (parsed) return parsed;
+  }
+
+  const firstBrace = text.indexOf("{");
+  const lastBrace = text.lastIndexOf("}");
+
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    const sliced = text.slice(firstBrace, lastBrace + 1);
+    const parsed = safeJsonParse(sliced);
+    if (parsed) return parsed;
+  }
+
+  return null;
+}
+
+function extractOutputText(apiResponse) {
+  if (typeof apiResponse?.output_text === "string" && apiResponse.output_text) {
+    return apiResponse.output_text;
+  }
+
+  if (!Array.isArray(apiResponse?.output)) {
+    return "";
+  }
+
+  for (const item of apiResponse.output) {
+    if (!Array.isArray(item?.content)) continue;
+
+    for (const contentItem of item.content) {
+      if (typeof contentItem?.text === "string" && contentItem.text) {
+        return contentItem.text;
       }
     }
   }
@@ -109,194 +290,239 @@ function extractTextFromResponse(data) {
   return "";
 }
 
-export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
+function buildImageInput({ imageUrl, imageBase64, imageDataUrl, mimeType }) {
+  if (imageDataUrl && String(imageDataUrl).startsWith("data:")) {
+    return String(imageDataUrl);
   }
 
-  try {
-    const apiKey = process.env.OPENAI_API_KEY;
+  if (imageBase64) {
+    const cleanBase64 = String(imageBase64).replace(/^data:[^;]+;base64,/, "");
+    const resolvedMimeType = mimeType || "image/jpeg";
+    return `data:${resolvedMimeType};base64,${cleanBase64}`;
+  }
 
-    if (!apiKey) {
-      return res.status(500).json({
-        error: "Missing OPENAI_API_KEY environment variable.",
-      });
-    }
+  if (imageUrl) {
+    return String(imageUrl);
+  }
 
-    const {
-      imageBase64,
-      mimeType,
-      userId: bodyUserId,
-      fileName,
-      imageWidth,
-      imageHeight,
-      profile,
-    } = req.body || {};
+  return "";
+}
 
-    if (!imageBase64) {
-      return res.status(400).json({ error: "Missing imageBase64." });
-    }
+async function callOpenAiWardrobeDetection({
+  imageInput,
+  fileName,
+  profile,
+}) {
+  const apiKey = process.env.OPENAI_API_KEY;
 
-    const userId = String(getUserId(req, bodyUserId));
+  if (!apiKey) {
+    throw new Error("Missing OPENAI_API_KEY environment variable.");
+  }
 
-    if (isRateLimited(userId)) {
-      return res.status(429).json({
-        error: "Daily detection limit reached.",
-        limit: DAILY_LIMIT,
-        remaining: 0,
-      });
-    }
+  const profileText = profile
+    ? JSON.stringify(profile, null, 2)
+    : "{}";
 
-    const safeMimeType = mimeType || "image/jpeg";
-    const dataUrl = `data:${safeMimeType};base64,${imageBase64}`;
-
-    const prompt = `
-You are a fashion wardrobe detection assistant.
+  const systemPrompt = `
+You are a fashion wardrobe detector for a clothing app called StyleSync.
 
 Your job:
-1. Look only at the clothing item in the image.
-2. Ignore the background completely.
-3. Ignore shadows, floor, wall, hands, mannequin, hanger, and surrounding objects.
-4. Detect the SINGLE main wardrobe item.
-5. Return valid JSON only.
+- Look at ONE wardrobe item image.
+- Identify the most likely clothing category.
+- Suggest the main visible color.
+- Write a short practical style note.
+- Provide a confidence label.
+- Provide short reasons.
+- Provide a few alternative categories only if they are realistic.
 
-Allowed categories:
-${JSON.stringify(ALLOWED_CATEGORIES)}
+You must classify the item into exactly one of these categories:
+top, bottom, dress, shoes, jacket, accessory
 
-Allowed colors:
-${JSON.stringify(ALLOWED_COLORS)}
+Rules:
+- Return JSON only.
+- Do not wrap JSON in markdown.
+- Keep reasons short and practical.
+- Keep style note short, helpful, and natural.
+- If uncertain, still choose the closest category from the allowed list.
+`.trim();
 
-Rules for color:
-- Pick the dominant visible color of the clothing item itself.
-- Do not default to "neutral" unless the item is truly beige/taupe/tan/off-white/muted neutral.
-- If the item is clearly blue, return "blue".
-- If the item is clearly black, return "black".
-- If the item is clearly white, return "white".
-- If the item is clearly cream/off-white, return "cream".
-- If uncertain between two colors, choose the closest visible dominant color.
+  const userPrompt = `
+App user profile:
+${profileText}
 
-Rules for category:
-- "top" for shirts, blouses, sweaters, t-shirts, tanks
-- "bottom" for pants, jeans, skirts, shorts
-- "dress" for dresses
-- "shoes" for footwear
-- "jacket" for jackets, blazers, coats, outer layers
-- "accessory" for bags, hats, belts, scarves, jewelry
+Image file name:
+${fileName || "unknown"}
 
-Style note:
-- Keep it short and practical
-- Example: "blue casual t-shirt"
-- Example: "black ankle boots"
-- Example: "cream structured blazer"
+Please analyze this single wardrobe item and return exactly this JSON shape:
 
-Confidence label:
-- Use one of: "High confidence", "Medium confidence", "Low confidence"
-
-Return exactly this JSON shape:
 {
   "suggestedCategory": "top",
   "suggestedColor": "blue",
-  "suggestedStyleNote": "blue casual t-shirt",
+  "suggestedStyleNote": "soft casual knit top",
   "confidenceLabel": "High confidence",
-  "reasons": [
-    "reason 1",
-    "reason 2"
-  ],
-  "alternativeCategories": ["top", "jacket"]
+  "reasons": ["reason 1", "reason 2"],
+  "alternativeCategories": ["jacket", "dress"]
 }
-
-Extra context:
-fileName: ${JSON.stringify(fileName || "")}
-imageWidth: ${Number(imageWidth || 0)}
-imageHeight: ${Number(imageHeight || 0)}
-profile: ${JSON.stringify(profile || null)}
 `.trim();
 
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "gpt-4.1-mini",
-        input: [
+  const requestBody = {
+    model: process.env.OPENAI_WARDROBE_MODEL || "gpt-5-mini",
+    input: [
+      {
+        role: "system",
+        content: [
           {
-            role: "user",
-            content: [
-              {
-                type: "input_text",
-                text: prompt,
-              },
-              {
-                type: "input_image",
-                image_url: dataUrl,
-                detail: "high",
-              },
-            ],
+            type: "input_text",
+            text: systemPrompt,
           },
         ],
-      }),
-    });
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text: userPrompt,
+          },
+          {
+            type: "input_image",
+            image_url: imageInput,
+          },
+        ],
+      },
+    ],
+  };
 
-    const rawText = await response.text();
+  const openAiResponse = await fetch(OPENAI_API_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify(requestBody),
+  });
 
-    if (!response.ok) {
-      return res.status(500).json({
-        error: "OpenAI request failed",
-        details: rawText,
-      });
-    }
+  const data = await openAiResponse.json();
 
-    let openaiData;
+  if (!openAiResponse.ok) {
+    const message =
+      data?.error?.message ||
+      "OpenAI wardrobe detection request failed.";
 
-    try {
-      openaiData = JSON.parse(rawText);
-    } catch {
-      return res.status(500).json({
-        error: "Invalid JSON returned from OpenAI.",
-        details: rawText,
-      });
-    }
+    throw new Error(message);
+  }
 
-    const outputText = extractTextFromResponse(openaiData);
+  const rawText = extractOutputText(data);
+  const parsed = extractJsonObject(rawText);
 
-    if (!outputText) {
-      return res.status(500).json({
-        error: "OpenAI returned no output",
-      });
-    }
+  if (!parsed) {
+    throw new Error("OpenAI returned an unexpected response format.");
+  }
 
-    let parsed;
+  const suggestedCategory = normalizeCategory(parsed.suggestedCategory);
+  const alternativeCategories = normalizeAlternativeCategories(
+    parsed.alternativeCategories,
+    suggestedCategory
+  );
 
-    try {
-      parsed = JSON.parse(outputText);
-    } catch {
-      return res.status(500).json({
-        error: "OpenAI returned non-JSON output",
-        details: outputText,
-      });
-    }
+  return {
+    suggestedCategory,
+    suggestedColor: normalizeColor(parsed.suggestedColor),
+    suggestedStyleNote: normalizeStyleNote(parsed.suggestedStyleNote),
+    confidenceLabel: normalizeConfidenceLabel(parsed.confidenceLabel),
+    reasons: normalizeReasons(parsed.reasons),
+    alternativeCategories,
+  };
+}
 
-    const finalResult = {
-      suggestedCategory: normalizeCategory(parsed?.suggestedCategory),
-      suggestedColor: normalizeColor(parsed?.suggestedColor),
-      suggestedStyleNote: String(parsed?.suggestedStyleNote || ""),
-      confidenceLabel: String(parsed?.confidenceLabel || "Medium confidence"),
-      reasons: normalizeStringArray(parsed?.reasons).slice(0, 4),
-      alternativeCategories: normalizeStringArray(parsed?.alternativeCategories)
-        .map((item) => normalizeCategory(item))
-        .filter((item, index, arr) => arr.indexOf(item) === index)
-        .slice(0, 3),
-      remaining: getRemainingRequests(userId),
-      limit: DAILY_LIMIT,
-    };
+module.exports = async function handler(req, res) {
+  setCorsHeaders(res);
 
-    return res.status(200).json(finalResult);
-  } catch (error) {
-    return res.status(500).json({
-      error: "Server error",
-      details: error?.message || "Unknown error",
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+
+  if (req.method !== "POST") {
+    return res.status(405).json({
+      error: "Method not allowed. Use POST.",
     });
   }
-}
+
+  try {
+    const {
+      userId,
+      imageUrl,
+      imageBase64,
+      imageDataUrl,
+      mimeType,
+      fileName,
+      profile,
+    } = req.body || {};
+
+    const normalizedUserId = normalizeUserId(userId);
+
+    if (!normalizedUserId) {
+      return res.status(400).json({
+        error: "Missing required field: userId",
+        code: "MISSING_USER_ID",
+      });
+    }
+
+    const imageInput = buildImageInput({
+      imageUrl,
+      imageBase64,
+      imageDataUrl,
+      mimeType,
+    });
+
+    if (!imageInput) {
+      return res.status(400).json({
+        error:
+          "Missing image data. Provide imageUrl, imageBase64, or imageDataUrl.",
+        code: "MISSING_IMAGE",
+      });
+    }
+
+    const todayKey = getTodayKey();
+    const plan = getUserPlan(normalizedUserId);
+    const limit = getPlanLimit(plan);
+
+    const currentCount = await getUsageCount(normalizedUserId, todayKey);
+
+    if (currentCount >= limit) {
+      return res.status(429).json({
+        error: "Daily wardrobe detection limit reached.",
+        code: "DAILY_LIMIT_REACHED",
+        upgradeRequired: plan === "free",
+        remaining: 0,
+        limit,
+        plan,
+        resetDate: todayKey,
+      });
+    }
+
+    const detection = await callOpenAiWardrobeDetection({
+      imageInput,
+      fileName,
+      profile,
+    });
+
+    const newCount = await incrementUsageCount(normalizedUserId, todayKey);
+    const remaining = Math.max(0, limit - newCount);
+
+    return res.status(200).json({
+      ...detection,
+      remaining,
+      limit,
+      plan,
+      upgradeRequired: false,
+    });
+  } catch (error) {
+    console.error("detect-wardrobe error:", error);
+
+    return res.status(500).json({
+      error: error?.message || "Wardrobe detection failed.",
+      code: "WARDROBE_DETECTION_FAILED",
+    });
+  }
+};
