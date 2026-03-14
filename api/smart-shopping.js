@@ -1,6 +1,6 @@
 const OPENAI_API_URL = "https://api.openai.com/v1/responses";
 
-const FREE_DAILY_LIMIT = 2;
+const FREE_DAILY_LIMIT = 50;
 const PRO_DAILY_LIMIT = 1000;
 
 /**
