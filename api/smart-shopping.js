@@ -416,6 +416,10 @@ function normalizeList(value) {
   return value.map((item) => normalizeString(item)).filter(Boolean);
 }
 
+function uniqueList(values) {
+  return [...new Set((values || []).filter(Boolean))];
+}
+
 function toNumber(value) {
   if (typeof value === "number" && !Number.isNaN(value)) {
     return value;
@@ -429,6 +433,13 @@ function toNumber(value) {
 
   const parsed = Number(cleaned);
   return Number.isNaN(parsed) ? null : parsed;
+}
+
+function safeContains(text, keyword) {
+  const a = normalizeString(text);
+  const b = normalizeString(keyword);
+  if (!a || !b) return false;
+  return a.includes(b);
 }
 
 function getProUserIds() {
@@ -514,6 +525,14 @@ function getPreferredStores(profile) {
   return single ? [single] : [];
 }
 
+function getDoNotInclude(profile, filters) {
+  const fromProfile = normalizeList(
+    profile?.doNotInclude || profile?.excludedPreferences
+  );
+  const fromFilters = normalizeList(filters?.doNotInclude);
+  return uniqueList([...fromProfile, ...fromFilters]);
+}
+
 function getWardrobeColors(wardrobe) {
   if (!Array.isArray(wardrobe)) return [];
   const colors = wardrobe
@@ -538,7 +557,151 @@ function buildGapCategoryHints(wardrobe) {
   return possible.filter((item) => !categories.includes(item));
 }
 
-function buildCatalogShortlist(profile, filters, wardrobe) {
+function normalizeLearningMemory(learningMemory) {
+  const memory = learningMemory || {};
+
+  const recentlyUsedFilters = memory?.recentlyUsedFilters || {};
+
+  const savedShoppingLooks = Array.isArray(memory?.savedShoppingLooks)
+    ? memory.savedShoppingLooks.map((look) => ({
+        id: String(look?.id || "").trim(),
+        title: String(look?.title || "").trim(),
+        itemIds: normalizeList(look?.itemIds),
+        categories: normalizeList(look?.categories),
+        colors: normalizeList(look?.colors),
+        stores: normalizeList(look?.stores),
+        itemCount:
+          typeof look?.itemCount === "number"
+            ? look.itemCount
+            : normalizeList(look?.itemIds).length,
+        createdAt: String(look?.createdAt || "").trim(),
+      }))
+    : [];
+
+  return {
+    likedItemIds: normalizeList(memory?.likedItemIds),
+    dislikedItemIds: normalizeList(memory?.dislikedItemIds),
+    likedStores: normalizeList(memory?.likedStores),
+    dislikedStores: normalizeList(memory?.dislikedStores),
+    likedColors: normalizeList(memory?.likedColors),
+    dislikedColors: normalizeList(memory?.dislikedColors),
+    likedCategories: normalizeList(memory?.likedCategories),
+    dislikedCategories: normalizeList(memory?.dislikedCategories),
+    recentlyUsedFilters: {
+      selectedCategory: normalizeString(recentlyUsedFilters?.selectedCategory),
+      selectedOccasion: normalizeString(recentlyUsedFilters?.selectedOccasion),
+      selectedStores: normalizeList(recentlyUsedFilters?.selectedStores),
+      minBudget: toNumber(recentlyUsedFilters?.minBudget),
+      maxBudget: toNumber(recentlyUsedFilters?.maxBudget),
+    },
+    savedShoppingLooks,
+  };
+}
+
+function matchesDoNotInclude(item, blockedTerms) {
+  if (!blockedTerms || blockedTerms.length === 0) return false;
+
+  const title = normalizeString(item?.title);
+  const store = normalizeString(item?.store);
+  const category = normalizeString(item?.category);
+  const color = normalizeString(item?.color);
+  const styleTags = normalizeList(item?.styleTags);
+  const fitTags = normalizeList(item?.fitTags);
+
+  const searchableValues = [
+    title,
+    store,
+    category,
+    color,
+    ...styleTags,
+    ...fitTags,
+  ];
+
+  return blockedTerms.some((term) => {
+    const normalizedTerm = normalizeString(term);
+    if (!normalizedTerm) return false;
+
+    return searchableValues.some((value) => {
+      if (!value) return false;
+      return value.includes(normalizedTerm);
+    });
+  });
+}
+
+function scoreCatalogItem(item, context) {
+  let score = 0;
+
+  const itemId = normalizeString(item.id);
+  const itemStore = normalizeString(item.store);
+  const itemCategory = normalizeString(item.category);
+  const itemColor = normalizeString(item.color);
+  const itemStyleTags = normalizeList(item.styleTags);
+  const itemBodyTypeTags = normalizeList(item.bodyTypeTags);
+  const itemHeightTags = normalizeList(item.heightCategoryTags);
+  const itemOccasionTags = normalizeList(item.occasionTags);
+
+  if (context.preferredStores.includes(itemStore)) score += 20;
+  if (context.selectedStores.includes(itemStore)) score += 18;
+
+  if (context.stylePreference && itemStyleTags.includes(context.stylePreference)) {
+    score += 22;
+  }
+
+  if (context.bodyType && itemBodyTypeTags.includes(context.bodyType)) {
+    score += 16;
+  }
+
+  if (
+    context.heightCategory &&
+    itemHeightTags.includes(context.heightCategory)
+  ) {
+    score += 12;
+  }
+
+  if (
+    context.selectedOccasion &&
+    itemOccasionTags.includes(context.selectedOccasion)
+  ) {
+    score += 14;
+  }
+
+  if (
+    !context.selectedOccasion &&
+    context.profileOccasion &&
+    itemOccasionTags.includes(context.profileOccasion)
+  ) {
+    score += 8;
+  }
+
+  if (context.wardrobeColors.includes(itemColor)) score += 8;
+  if (context.missingCategories.includes(itemCategory)) score += 10;
+
+  if (context.learningMemory.likedItemIds.includes(itemId)) score += 120;
+  if (context.learningMemory.dislikedItemIds.includes(itemId)) score -= 120;
+
+  if (context.learningMemory.likedStores.includes(itemStore)) score += 24;
+  if (context.learningMemory.dislikedStores.includes(itemStore)) score -= 24;
+
+  if (context.learningMemory.likedColors.includes(itemColor)) score += 18;
+  if (context.learningMemory.dislikedColors.includes(itemColor)) score -= 18;
+
+  if (context.learningMemory.likedCategories.includes(itemCategory)) score += 18;
+  if (context.learningMemory.dislikedCategories.includes(itemCategory)) {
+    score -= 18;
+  }
+
+  const savedLooks = context.learningMemory.savedShoppingLooks || [];
+
+  for (const look of savedLooks) {
+    if (look.categories.includes(itemCategory)) score += 8;
+    if (look.colors.includes(itemColor)) score += 8;
+    if (look.stores.includes(itemStore)) score += 8;
+  }
+
+  return score;
+}
+
+function buildCatalogShortlist(profile, filters, wardrobe, learningMemory) {
   const gender = normalizeString(profile?.gender);
   const country = normalizeString(profile?.country);
   const stylePreference = normalizeString(profile?.stylePreference);
@@ -550,11 +713,26 @@ function buildCatalogShortlist(profile, filters, wardrobe) {
   const selectedStores = normalizeList(filters?.selectedStores);
   const selectedCategory = normalizeString(filters?.selectedCategory);
   const selectedOccasion = normalizeString(filters?.selectedOccasion);
+  const profileOccasion = normalizeString(profile?.occasion);
   const minBudget = toNumber(filters?.minBudget);
   const maxBudget = toNumber(filters?.maxBudget);
 
   const wardrobeColors = getWardrobeColors(wardrobe);
   const missingCategories = buildGapCategoryHints(wardrobe);
+  const blockedTerms = getDoNotInclude(profile, filters);
+
+  const context = {
+    preferredStores,
+    selectedStores,
+    stylePreference,
+    bodyType,
+    heightCategory,
+    selectedOccasion,
+    profileOccasion,
+    wardrobeColors,
+    missingCategories,
+    learningMemory,
+  };
 
   let filtered = STORE_CATALOG.filter((item) => {
     const itemGender = normalizeString(item.gender);
@@ -565,15 +743,25 @@ function buildCatalogShortlist(profile, filters, wardrobe) {
 
     if (gender && itemGender !== gender) return false;
     if (country && itemCountry !== country) return false;
+
+    if (preferredStores.length > 0 && !preferredStores.includes(itemStore)) {
+      return false;
+    }
+
     if (selectedStores.length > 0 && !selectedStores.includes(itemStore)) {
       return false;
     }
+
     if (selectedCategory && itemCategory !== selectedCategory) return false;
+
     if (selectedOccasion && !itemOccasions.includes(selectedOccasion)) {
       return false;
     }
+
     if (minBudget !== null && item.price < minBudget) return false;
     if (maxBudget !== null && item.price > maxBudget) return false;
+
+    if (matchesDoNotInclude(item, blockedTerms)) return false;
 
     return true;
   });
@@ -581,24 +769,56 @@ function buildCatalogShortlist(profile, filters, wardrobe) {
   if (filtered.length === 0) {
     filtered = STORE_CATALOG.filter((item) => {
       const itemGender = normalizeString(item.gender);
-      return !gender || itemGender === gender;
+      const itemStore = normalizeString(item.store);
+
+      if (gender && itemGender !== gender) return false;
+      if (preferredStores.length > 0 && !preferredStores.includes(itemStore)) {
+        return false;
+      }
+      if (matchesDoNotInclude(item, blockedTerms)) return false;
+
+      return true;
     });
   }
 
-  return filtered.map((item) => ({
-    ...item,
-    matchSignals: {
-      preferredStoreMatch: preferredStores.includes(normalizeString(item.store)),
-      styleMatch: normalizeList(item.styleTags).includes(stylePreference),
-      bodyTypeMatch: normalizeList(item.bodyTypeTags).includes(bodyType),
-      heightMatch: normalizeList(item.heightCategoryTags).includes(heightCategory),
-      wardrobeColorMatch: wardrobeColors.includes(normalizeString(item.color)),
-      missingCategoryMatch: missingCategories.includes(normalizeString(item.category)),
-      skinToneHint: skinTone,
-      selectedOccasion,
-      selectedCategory,
-    },
-  }));
+  const ranked = filtered
+    .map((item) => {
+      const score = scoreCatalogItem(item, context);
+
+      return {
+        ...item,
+        rankingScore: score,
+        matchSignals: {
+          preferredStoreMatch: preferredStores.includes(normalizeString(item.store)),
+          styleMatch: normalizeList(item.styleTags).includes(stylePreference),
+          bodyTypeMatch: normalizeList(item.bodyTypeTags).includes(bodyType),
+          heightMatch: normalizeList(item.heightCategoryTags).includes(
+            heightCategory
+          ),
+          wardrobeColorMatch: wardrobeColors.includes(normalizeString(item.color)),
+          missingCategoryMatch: missingCategories.includes(
+            normalizeString(item.category)
+          ),
+          likedStoreMatch: learningMemory.likedStores.includes(
+            normalizeString(item.store)
+          ),
+          likedColorMatch: learningMemory.likedColors.includes(
+            normalizeString(item.color)
+          ),
+          likedCategoryMatch: learningMemory.likedCategories.includes(
+            normalizeString(item.category)
+          ),
+          blockedByDoNotInclude: false,
+          skinToneHint: skinTone,
+          selectedOccasion,
+          selectedCategory,
+          rankingScore: score,
+        },
+      };
+    })
+    .sort((a, b) => b.rankingScore - a.rankingScore);
+
+  return ranked;
 }
 
 function buildProductContextForPrompt(products) {
@@ -621,6 +841,7 @@ function buildProductContextForPrompt(products) {
     image: item.image,
     buyUrl: item.buyUrl,
     matchSignals: item.matchSignals,
+    rankingScore: item.rankingScore,
   }));
 }
 
@@ -682,6 +903,7 @@ async function callOpenAiSmartShopping({
   profile,
   filters,
   wardrobe,
+  learningMemory,
   shortlistedProducts,
 }) {
   const apiKey = process.env.OPENAI_API_KEY;
@@ -699,8 +921,11 @@ You must choose the best exact products from the provided catalog only.
 
 Goals:
 - Select products that best suit the user's body type, height category, style preference, gender, budget, preferred stores, country, and occasion.
-- Prefer items that feel flattering, wearable, polished, and relevant.
-- When useful, prefer items that fill wardrobe gaps or coordinate with wardrobe colors.
+- Use the style learning memory to adapt recommendations based on likes, dislikes, saved shopping looks, and recent filter behavior.
+- Prefer items that feel flattering, wearable, modern, everyday, and polished.
+- Avoid extreme or runway-style fashion.
+- Never recommend anything that conflicts with the user's doNotInclude preferences.
+- Prefer items that fill wardrobe gaps or coordinate with wardrobe colors when that helps.
 - Do not invent products.
 - Return JSON only.
 - Do not wrap JSON in markdown.
@@ -733,8 +958,18 @@ ${JSON.stringify(filters || {}, null, 2)}
 Saved wardrobe:
 ${JSON.stringify(wardrobe || [], null, 2)}
 
+Style learning memory:
+${JSON.stringify(learningMemory || {}, null, 2)}
+
 Available product catalog shortlist:
 ${JSON.stringify(productContext, null, 2)}
+
+Important rules:
+- Use only product IDs from the shortlist.
+- Respect budget, preferred stores, and doNotInclude.
+- Use learning memory to favor liked stores, colors, and categories.
+- Avoid items similar to disliked choices.
+- Prefer wearable, modern, real-life style.
 
 Please choose the best exact products from the shortlist only.
 Prefer 6 product IDs if possible.
@@ -826,7 +1061,7 @@ module.exports = async function handler(req, res) {
   }
 
   try {
-    const { userId, profile, filters, wardrobe } = req.body || {};
+    const { userId, profile, filters, wardrobe, learningMemory } = req.body || {};
 
     const normalizedUserId = normalizeUserId(userId);
 
@@ -854,10 +1089,13 @@ module.exports = async function handler(req, res) {
       });
     }
 
+    const normalizedLearningMemory = normalizeLearningMemory(learningMemory);
+
     const shortlistedProducts = buildCatalogShortlist(
       profile || {},
       filters || {},
-      Array.isArray(wardrobe) ? wardrobe : []
+      Array.isArray(wardrobe) ? wardrobe : [],
+      normalizedLearningMemory
     );
 
     if (shortlistedProducts.length === 0) {
@@ -879,6 +1117,7 @@ module.exports = async function handler(req, res) {
         profile: profile || {},
         filters: filters || {},
         wardrobe: Array.isArray(wardrobe) ? wardrobe : [],
+        learningMemory: normalizedLearningMemory,
         shortlistedProducts,
       });
 
@@ -908,10 +1147,9 @@ module.exports = async function handler(req, res) {
       .map((id) => results.find((item) => item.id === id))
       .filter(Boolean);
 
-    const finalResults =
-      orderedResults.length > 0
-        ? orderedResults
-        : results.slice(0, 6);
+    const finalResults = orderedResults.length > 0
+      ? orderedResults
+      : results.slice(0, 6);
 
     const newCount = await incrementUsageCount(normalizedUserId, todayKey);
     const remaining = Math.max(0, limit - newCount);
@@ -939,7 +1177,9 @@ module.exports = async function handler(req, res) {
       reasoning:
         reasoning.length > 0
           ? reasoning
-          : ["These items were chosen to best match the user's saved profile and filters."],
+          : [
+              "These items were chosen to match the user's profile, filters, and learned shopping preferences.",
+            ],
       remaining,
       limit,
       plan,
