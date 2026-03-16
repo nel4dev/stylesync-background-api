@@ -403,6 +403,10 @@ function getSecondsUntilNextUtcMidnight() {
   return Math.max(60, Math.floor((next.getTime() - now.getTime()) / 1000));
 }
 
+function getLearningMemoryTtlSeconds() {
+  return 60 * 60 * 24 * 180;
+}
+
 function normalizeString(value) {
   return String(value || "").trim().toLowerCase();
 }
@@ -435,13 +439,6 @@ function toNumber(value) {
   return Number.isNaN(parsed) ? null : parsed;
 }
 
-function safeContains(text, keyword) {
-  const a = normalizeString(text);
-  const b = normalizeString(keyword);
-  if (!a || !b) return false;
-  return a.includes(b);
-}
-
 function getProUserIds() {
   return String(process.env.PRO_USER_IDS || "")
     .split(",")
@@ -469,6 +466,10 @@ function getPlanLimit(plan) {
 
 function getUsageKey(userId, dateKey) {
   return `smart-shopping:${userId}:${dateKey}`;
+}
+
+function getLearningMemoryKey(userId) {
+  return `smart-shopping-learning:${userId}`;
 }
 
 async function getKvClient() {
@@ -559,7 +560,6 @@ function buildGapCategoryHints(wardrobe) {
 
 function normalizeLearningMemory(learningMemory) {
   const memory = learningMemory || {};
-
   const recentlyUsedFilters = memory?.recentlyUsedFilters || {};
 
   const savedShoppingLooks = Array.isArray(memory?.savedShoppingLooks)
@@ -596,6 +596,126 @@ function normalizeLearningMemory(learningMemory) {
     },
     savedShoppingLooks,
   };
+}
+
+function createEmptyLearningMemory() {
+  return normalizeLearningMemory({});
+}
+
+function mergeSavedShoppingLooks(existingLooks, incomingLooks) {
+  const map = new Map();
+
+  [...(existingLooks || []), ...(incomingLooks || [])].forEach((look) => {
+    const id = String(look?.id || "").trim();
+    const title = String(look?.title || "").trim();
+    const key = id || title || `look-${map.size + 1}`;
+
+    if (!key) return;
+
+    const previous = map.get(key);
+
+    map.set(key, {
+      id,
+      title,
+      itemIds: uniqueList([
+        ...(previous?.itemIds || []),
+        ...normalizeList(look?.itemIds),
+      ]),
+      categories: uniqueList([
+        ...(previous?.categories || []),
+        ...normalizeList(look?.categories),
+      ]),
+      colors: uniqueList([
+        ...(previous?.colors || []),
+        ...normalizeList(look?.colors),
+      ]),
+      stores: uniqueList([
+        ...(previous?.stores || []),
+        ...normalizeList(look?.stores),
+      ]),
+      itemCount:
+        typeof look?.itemCount === "number"
+          ? look.itemCount
+          : previous?.itemCount || normalizeList(look?.itemIds).length,
+      createdAt:
+        String(look?.createdAt || "").trim() ||
+        String(previous?.createdAt || "").trim(),
+    });
+  });
+
+  return Array.from(map.values()).slice(0, 30);
+}
+
+function mergeLearningMemory(existingMemory, incomingMemory) {
+  const a = normalizeLearningMemory(existingMemory);
+  const b = normalizeLearningMemory(incomingMemory);
+
+  const selectedStores = uniqueList([
+    ...(a.recentlyUsedFilters?.selectedStores || []),
+    ...(b.recentlyUsedFilters?.selectedStores || []),
+  ]).slice(-8);
+
+  return {
+    likedItemIds: uniqueList([...a.likedItemIds, ...b.likedItemIds]).slice(-200),
+    dislikedItemIds: uniqueList([...a.dislikedItemIds, ...b.dislikedItemIds]).slice(-200),
+    likedStores: uniqueList([...a.likedStores, ...b.likedStores]).slice(-30),
+    dislikedStores: uniqueList([...a.dislikedStores, ...b.dislikedStores]).slice(-30),
+    likedColors: uniqueList([...a.likedColors, ...b.likedColors]).slice(-40),
+    dislikedColors: uniqueList([...a.dislikedColors, ...b.dislikedColors]).slice(-40),
+    likedCategories: uniqueList([...a.likedCategories, ...b.likedCategories]).slice(-20),
+    dislikedCategories: uniqueList([...a.dislikedCategories, ...b.dislikedCategories]).slice(-20),
+    recentlyUsedFilters: {
+      selectedCategory:
+        b.recentlyUsedFilters?.selectedCategory ||
+        a.recentlyUsedFilters?.selectedCategory ||
+        "",
+      selectedOccasion:
+        b.recentlyUsedFilters?.selectedOccasion ||
+        a.recentlyUsedFilters?.selectedOccasion ||
+        "",
+      selectedStores,
+      minBudget:
+        b.recentlyUsedFilters?.minBudget !== null &&
+        b.recentlyUsedFilters?.minBudget !== undefined
+          ? b.recentlyUsedFilters.minBudget
+          : a.recentlyUsedFilters?.minBudget ?? null,
+      maxBudget:
+        b.recentlyUsedFilters?.maxBudget !== null &&
+        b.recentlyUsedFilters?.maxBudget !== undefined
+          ? b.recentlyUsedFilters.maxBudget
+          : a.recentlyUsedFilters?.maxBudget ?? null,
+    },
+    savedShoppingLooks: mergeSavedShoppingLooks(
+      a.savedShoppingLooks,
+      b.savedShoppingLooks
+    ),
+  };
+}
+
+async function getStoredLearningMemory(userId) {
+  const key = getLearningMemoryKey(userId);
+  const kv = await getKvClient();
+
+  if (kv) {
+    const value = await kv.get(key);
+    return normalizeLearningMemory(value || {});
+  }
+
+  const value = memoryStore.get(key);
+  return normalizeLearningMemory(value || {});
+}
+
+async function saveStoredLearningMemory(userId, learningMemory) {
+  const key = getLearningMemoryKey(userId);
+  const normalized = normalizeLearningMemory(learningMemory);
+  const kv = await getKvClient();
+
+  if (kv) {
+    await kv.set(key, normalized, { ex: getLearningMemoryTtlSeconds() });
+    return;
+  }
+
+  memoryStore.set(key, normalized);
 }
 
 function matchesDoNotInclude(item, blockedTerms) {
@@ -1089,13 +1209,18 @@ module.exports = async function handler(req, res) {
       });
     }
 
-    const normalizedLearningMemory = normalizeLearningMemory(learningMemory);
+    const incomingLearningMemory = normalizeLearningMemory(learningMemory);
+    const storedLearningMemory = await getStoredLearningMemory(normalizedUserId);
+    const mergedLearningMemory = mergeLearningMemory(
+      storedLearningMemory,
+      incomingLearningMemory
+    );
 
     const shortlistedProducts = buildCatalogShortlist(
       profile || {},
       filters || {},
       Array.isArray(wardrobe) ? wardrobe : [],
-      normalizedLearningMemory
+      mergedLearningMemory
     );
 
     if (shortlistedProducts.length === 0) {
@@ -1106,6 +1231,7 @@ module.exports = async function handler(req, res) {
         limit,
         plan,
         upgradeRequired: false,
+        learningMemory: mergedLearningMemory,
       });
     }
 
@@ -1117,7 +1243,7 @@ module.exports = async function handler(req, res) {
         profile: profile || {},
         filters: filters || {},
         wardrobe: Array.isArray(wardrobe) ? wardrobe : [],
-        learningMemory: normalizedLearningMemory,
+        learningMemory: mergedLearningMemory,
         shortlistedProducts,
       });
 
@@ -1136,7 +1262,6 @@ module.exports = async function handler(req, res) {
     }
 
     const selectedIdSet = new Set(selectedProductIds);
-
     let results = shortlistedProducts.filter((item) => selectedIdSet.has(item.id));
 
     if (results.length === 0) {
@@ -1150,6 +1275,27 @@ module.exports = async function handler(req, res) {
     const finalResults = orderedResults.length > 0
       ? orderedResults
       : results.slice(0, 6);
+
+    const autoLearnedMemory = mergeLearningMemory(mergedLearningMemory, {
+      likedStores: finalResults
+        .slice(0, 3)
+        .map((item) => normalizeString(item.store)),
+      likedColors: finalResults
+        .slice(0, 3)
+        .map((item) => normalizeString(item.color)),
+      likedCategories: finalResults
+        .slice(0, 3)
+        .map((item) => normalizeString(item.category)),
+      recentlyUsedFilters: {
+        selectedCategory: normalizeString(filters?.selectedCategory),
+        selectedOccasion: normalizeString(filters?.selectedOccasion),
+        selectedStores: normalizeList(filters?.selectedStores),
+        minBudget: toNumber(filters?.minBudget),
+        maxBudget: toNumber(filters?.maxBudget),
+      },
+    });
+
+    await saveStoredLearningMemory(normalizedUserId, autoLearnedMemory);
 
     const newCount = await incrementUsageCount(normalizedUserId, todayKey);
     const remaining = Math.max(0, limit - newCount);
@@ -1184,6 +1330,7 @@ module.exports = async function handler(req, res) {
       limit,
       plan,
       upgradeRequired: false,
+      learningMemory: autoLearnedMemory,
     });
   } catch (error) {
     console.error("smart-shopping error:", error);
