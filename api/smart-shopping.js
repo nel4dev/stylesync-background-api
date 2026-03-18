@@ -2,6 +2,7 @@ const OPENAI_API_URL = "https://api.openai.com/v1/responses";
 
 const FREE_DAILY_LIMIT = 50;
 const PRO_DAILY_LIMIT = 1000;
+const MIN_RESULTS = 20;
 
 /**
  * Local fallback only.
@@ -379,7 +380,6 @@ const STORE_CATALOG = [
     buyUrl: "https://www.zalando.nl",
   },
 ];
-
 function setCorsHeaders(res) {
   res.setHeader("Access-Control-Allow-Credentials", "true");
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -457,11 +457,7 @@ function getUserPlan(userId) {
 }
 
 function getPlanLimit(plan) {
-  if (plan === "pro") {
-    return PRO_DAILY_LIMIT;
-  }
-
-  return FREE_DAILY_LIMIT;
+  return plan === "pro" ? PRO_DAILY_LIMIT : FREE_DAILY_LIMIT;
 }
 
 function getUsageKey(userId, dateKey) {
@@ -518,9 +514,7 @@ async function incrementUsageCount(userId, dateKey) {
 
 function getPreferredStores(profile) {
   const fromArray = normalizeList(profile?.preferredStores);
-  if (fromArray.length > 0) {
-    return fromArray;
-  }
+  if (fromArray.length > 0) return fromArray;
 
   const single = normalizeString(profile?.preferredStore);
   return single ? [single] : [];
@@ -536,20 +530,16 @@ function getDoNotInclude(profile, filters) {
 
 function getWardrobeColors(wardrobe) {
   if (!Array.isArray(wardrobe)) return [];
-  const colors = wardrobe
-    .map((item) => normalizeString(item?.color))
-    .filter(Boolean);
-
-  return [...new Set(colors)];
+  return [...new Set(
+    wardrobe.map((item) => normalizeString(item?.color)).filter(Boolean)
+  )];
 }
 
 function getWardrobeCategories(wardrobe) {
   if (!Array.isArray(wardrobe)) return [];
-  const categories = wardrobe
-    .map((item) => normalizeString(item?.category))
-    .filter(Boolean);
-
-  return [...new Set(categories)];
+  return [...new Set(
+    wardrobe.map((item) => normalizeString(item?.category)).filter(Boolean)
+  )];
 }
 
 function buildGapCategoryHints(wardrobe) {
@@ -561,7 +551,6 @@ function buildGapCategoryHints(wardrobe) {
 function normalizeLearningMemory(learningMemory) {
   const memory = learningMemory || {};
   const recentlyUsedFilters = memory?.recentlyUsedFilters || {};
-
   const savedShoppingLooks = Array.isArray(memory?.savedShoppingLooks)
     ? memory.savedShoppingLooks.map((look) => ({
         id: String(look?.id || "").trim(),
@@ -598,10 +587,6 @@ function normalizeLearningMemory(learningMemory) {
   };
 }
 
-function createEmptyLearningMemory() {
-  return normalizeLearningMemory({});
-}
-
 function mergeSavedShoppingLooks(existingLooks, incomingLooks) {
   const map = new Map();
 
@@ -609,7 +594,6 @@ function mergeSavedShoppingLooks(existingLooks, incomingLooks) {
     const id = String(look?.id || "").trim();
     const title = String(look?.title || "").trim();
     const key = id || title || `look-${map.size + 1}`;
-
     if (!key) return;
 
     const previous = map.get(key);
@@ -717,34 +701,23 @@ async function saveStoredLearningMemory(userId, learningMemory) {
 
   memoryStore.set(key, normalized);
 }
-
 function matchesDoNotInclude(item, blockedTerms) {
   if (!blockedTerms || blockedTerms.length === 0) return false;
 
-  const title = normalizeString(item?.title);
-  const store = normalizeString(item?.store);
-  const category = normalizeString(item?.category);
-  const color = normalizeString(item?.color);
-  const styleTags = normalizeList(item?.styleTags);
-  const fitTags = normalizeList(item?.fitTags);
-
   const searchableValues = [
-    title,
-    store,
-    category,
-    color,
-    ...styleTags,
-    ...fitTags,
+    normalizeString(item?.title),
+    normalizeString(item?.store),
+    normalizeString(item?.category),
+    normalizeString(item?.color),
+    ...normalizeList(item?.styleTags),
+    ...normalizeList(item?.fitTags),
   ];
 
   return blockedTerms.some((term) => {
     const normalizedTerm = normalizeString(term);
     if (!normalizedTerm) return false;
 
-    return searchableValues.some((value) => {
-      if (!value) return false;
-      return value.includes(normalizedTerm);
-    });
+    return searchableValues.some((value) => value && value.includes(normalizedTerm));
   });
 }
 
@@ -762,34 +735,11 @@ function scoreCatalogItem(item, context) {
 
   if (context.preferredStores.includes(itemStore)) score += 20;
   if (context.selectedStores.includes(itemStore)) score += 18;
-
-  if (context.stylePreference && itemStyleTags.includes(context.stylePreference)) {
-    score += 22;
-  }
-
-  if (context.bodyType && itemBodyTypeTags.includes(context.bodyType)) {
-    score += 16;
-  }
-
-  if (
-    context.heightCategory &&
-    itemHeightTags.includes(context.heightCategory)
-  ) {
-    score += 12;
-  }
-
-  if (
-    context.selectedOccasion &&
-    itemOccasionTags.includes(context.selectedOccasion)
-  ) {
-    score += 14;
-  }
-
-  if (
-    !context.selectedOccasion &&
-    context.profileOccasion &&
-    itemOccasionTags.includes(context.profileOccasion)
-  ) {
+  if (context.stylePreference && itemStyleTags.includes(context.stylePreference)) score += 22;
+  if (context.bodyType && itemBodyTypeTags.includes(context.bodyType)) score += 16;
+  if (context.heightCategory && itemHeightTags.includes(context.heightCategory)) score += 12;
+  if (context.selectedOccasion && itemOccasionTags.includes(context.selectedOccasion)) score += 14;
+  if (!context.selectedOccasion && context.profileOccasion && itemOccasionTags.includes(context.profileOccasion)) {
     score += 8;
   }
 
@@ -798,20 +748,14 @@ function scoreCatalogItem(item, context) {
 
   if (context.learningMemory.likedItemIds.includes(itemId)) score += 120;
   if (context.learningMemory.dislikedItemIds.includes(itemId)) score -= 120;
-
   if (context.learningMemory.likedStores.includes(itemStore)) score += 24;
   if (context.learningMemory.dislikedStores.includes(itemStore)) score -= 24;
-
   if (context.learningMemory.likedColors.includes(itemColor)) score += 18;
   if (context.learningMemory.dislikedColors.includes(itemColor)) score -= 18;
-
   if (context.learningMemory.likedCategories.includes(itemCategory)) score += 18;
-  if (context.learningMemory.dislikedCategories.includes(itemCategory)) {
-    score -= 18;
-  }
+  if (context.learningMemory.dislikedCategories.includes(itemCategory)) score -= 18;
 
   const savedLooks = context.learningMemory.savedShoppingLooks || [];
-
   for (const look of savedLooks) {
     if (look.categories.includes(itemCategory)) score += 8;
     if (look.colors.includes(itemColor)) score += 8;
@@ -863,24 +807,12 @@ function buildCatalogShortlist(profile, filters, wardrobe, learningMemory) {
 
     if (gender && itemGender !== gender) return false;
     if (country && itemCountry !== country) return false;
-
-    if (preferredStores.length > 0 && !preferredStores.includes(itemStore)) {
-      return false;
-    }
-
-    if (selectedStores.length > 0 && !selectedStores.includes(itemStore)) {
-      return false;
-    }
-
+    if (preferredStores.length > 0 && !preferredStores.includes(itemStore)) return false;
+    if (selectedStores.length > 0 && !selectedStores.includes(itemStore)) return false;
     if (selectedCategory && itemCategory !== selectedCategory) return false;
-
-    if (selectedOccasion && !itemOccasions.includes(selectedOccasion)) {
-      return false;
-    }
-
+    if (selectedOccasion && !itemOccasions.includes(selectedOccasion)) return false;
     if (minBudget !== null && item.price < minBudget) return false;
     if (maxBudget !== null && item.price > maxBudget) return false;
-
     if (matchesDoNotInclude(item, blockedTerms)) return false;
 
     return true;
@@ -892,16 +824,14 @@ function buildCatalogShortlist(profile, filters, wardrobe, learningMemory) {
       const itemStore = normalizeString(item.store);
 
       if (gender && itemGender !== gender) return false;
-      if (preferredStores.length > 0 && !preferredStores.includes(itemStore)) {
-        return false;
-      }
+      if (preferredStores.length > 0 && !preferredStores.includes(itemStore)) return false;
       if (matchesDoNotInclude(item, blockedTerms)) return false;
 
       return true;
     });
   }
 
-  const ranked = filtered
+  return filtered
     .map((item) => {
       const score = scoreCatalogItem(item, context);
 
@@ -912,22 +842,12 @@ function buildCatalogShortlist(profile, filters, wardrobe, learningMemory) {
           preferredStoreMatch: preferredStores.includes(normalizeString(item.store)),
           styleMatch: normalizeList(item.styleTags).includes(stylePreference),
           bodyTypeMatch: normalizeList(item.bodyTypeTags).includes(bodyType),
-          heightMatch: normalizeList(item.heightCategoryTags).includes(
-            heightCategory
-          ),
+          heightMatch: normalizeList(item.heightCategoryTags).includes(heightCategory),
           wardrobeColorMatch: wardrobeColors.includes(normalizeString(item.color)),
-          missingCategoryMatch: missingCategories.includes(
-            normalizeString(item.category)
-          ),
-          likedStoreMatch: learningMemory.likedStores.includes(
-            normalizeString(item.store)
-          ),
-          likedColorMatch: learningMemory.likedColors.includes(
-            normalizeString(item.color)
-          ),
-          likedCategoryMatch: learningMemory.likedCategories.includes(
-            normalizeString(item.category)
-          ),
+          missingCategoryMatch: missingCategories.includes(normalizeString(item.category)),
+          likedStoreMatch: learningMemory.likedStores.includes(normalizeString(item.store)),
+          likedColorMatch: learningMemory.likedColors.includes(normalizeString(item.color)),
+          likedCategoryMatch: learningMemory.likedCategories.includes(normalizeString(item.category)),
           blockedByDoNotInclude: false,
           skinToneHint: skinTone,
           selectedOccasion,
@@ -937,8 +857,6 @@ function buildCatalogShortlist(profile, filters, wardrobe, learningMemory) {
       };
     })
     .sort((a, b) => b.rankingScore - a.rankingScore);
-
-  return ranked;
 }
 
 function buildProductContextForPrompt(products) {
@@ -970,13 +888,10 @@ function extractOutputText(apiResponse) {
     return apiResponse.output_text;
   }
 
-  if (!Array.isArray(apiResponse?.output)) {
-    return "";
-  }
+  if (!Array.isArray(apiResponse?.output)) return "";
 
   for (const item of apiResponse.output) {
     if (!Array.isArray(item?.content)) continue;
-
     for (const contentItem of item.content) {
       if (typeof contentItem?.text === "string" && contentItem.text) {
         return contentItem.text;
@@ -990,7 +905,7 @@ function extractOutputText(apiResponse) {
 function safeJsonParse(text) {
   try {
     return JSON.parse(text);
-  } catch (error) {
+  } catch {
     return null;
   }
 }
@@ -1009,11 +924,8 @@ function extractJsonObject(text) {
 
   const firstBrace = text.indexOf("{");
   const lastBrace = text.lastIndexOf("}");
-
   if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-    const sliced = text.slice(firstBrace, lastBrace + 1);
-    const parsed = safeJsonParse(sliced);
-    if (parsed) return parsed;
+    return safeJsonParse(text.slice(firstBrace, lastBrace + 1));
   }
 
   return null;
@@ -1027,7 +939,6 @@ async function callOpenAiSmartShopping({
   shortlistedProducts,
 }) {
   const apiKey = process.env.OPENAI_API_KEY;
-
   if (!apiKey) {
     throw new Error("Missing OPENAI_API_KEY environment variable.");
   }
@@ -1058,14 +969,14 @@ Return exactly this JSON shape:
     "reason 3"
   ],
   "selectedProductIds": [
-    "product-id-1",
-    "product-id-2",
-    "product-id-3",
-    "product-id-4",
-    "product-id-5",
-    "product-id-6"
+    "product-id-1"
   ]
 }
+
+Rules for selectedProductIds:
+- Return up to 20 IDs when available.
+- Prefer diversity across categories when possible.
+- Keep results practical and wearable.
 `.trim();
 
   const userPrompt = `
@@ -1090,9 +1001,9 @@ Important rules:
 - Use learning memory to favor liked stores, colors, and categories.
 - Avoid items similar to disliked choices.
 - Prefer wearable, modern, real-life style.
+- Return up to 20 products if the shortlist supports it.
 
 Please choose the best exact products from the shortlist only.
-Prefer 6 product IDs if possible.
 Keep reasoning short, practical, and specific.
 `.trim();
 
@@ -1101,21 +1012,11 @@ Keep reasoning short, practical, and specific.
     input: [
       {
         role: "system",
-        content: [
-          {
-            type: "input_text",
-            text: systemPrompt,
-          },
-        ],
+        content: [{ type: "input_text", text: systemPrompt }],
       },
       {
         role: "user",
-        content: [
-          {
-            type: "input_text",
-            text: userPrompt,
-          },
-        ],
+        content: [{ type: "input_text", text: userPrompt }],
       },
     ],
   };
@@ -1145,9 +1046,11 @@ Keep reasoning short, practical, and specific.
   }
 
   const selectedProductIds = Array.isArray(parsed.selectedProductIds)
-    ? parsed.selectedProductIds
-        .map((item) => String(item || "").trim())
-        .filter(Boolean)
+    ? uniqueList(
+        parsed.selectedProductIds
+          .map((item) => String(item || "").trim())
+          .filter(Boolean)
+      ).slice(0, MIN_RESULTS)
     : [];
 
   const reasoning = Array.isArray(parsed.reasoning)
@@ -1157,14 +1060,68 @@ Keep reasoning short, practical, and specific.
         .slice(0, 5)
     : [];
 
-  return {
-    selectedProductIds,
-    reasoning,
-  };
+  return { selectedProductIds, reasoning };
+}
+function buildFallbackSelection(shortlistedProducts, count = MIN_RESULTS) {
+  return shortlistedProducts.slice(0, count).map((item) => item.id);
 }
 
-function buildFallbackSelection(shortlistedProducts) {
-  return shortlistedProducts.slice(0, 6).map((item) => item.id);
+function isWeakStoreUrl(url) {
+  const normalized = String(url || "").trim().toLowerCase();
+  if (!normalized.startsWith("http")) return true;
+
+  return (
+    normalized.endsWith(".com") ||
+    normalized.endsWith(".com/") ||
+    normalized.endsWith(".nl") ||
+    normalized.endsWith(".nl/") ||
+    normalized.endsWith(".co.uk") ||
+    normalized.endsWith(".co.uk/") ||
+    normalized.endsWith(".com.au") ||
+    normalized.endsWith(".com.au/") ||
+    normalized.includes("/women") ||
+    normalized.includes("/men") ||
+    normalized.includes("/new-in")
+  );
+}
+
+function buildStoreSearchUrl(item) {
+  const store = normalizeString(item?.store);
+  const query = encodeURIComponent(
+    `${item?.title || ""} ${item?.color || ""} ${item?.category || ""}`.trim()
+  );
+
+  if (store.includes("h&m") || store.includes("hm")) {
+    return `https://www2.hm.com/en_gb/search-results.html?q=${query}`;
+  }
+
+  if (store.includes("zara")) {
+    return `https://www.zara.com/uk/en/search?searchTerm=${query}`;
+  }
+
+  if (store.includes("mango")) {
+    return `https://shop.mango.com/gb/search?kw=${query}`;
+  }
+
+  if (store.includes("asos")) {
+    return `https://www.asos.com/search/?q=${query}`;
+  }
+
+  if (store.includes("zalando")) {
+    return `https://www.zalando.nl/catalog/?q=${query}`;
+  }
+
+  return `https://www.google.com/search?q=${encodeURIComponent(
+    `${item?.store || ""} ${item?.title || ""} ${item?.color || ""} ${item?.category || ""}`
+  )}`;
+}
+
+function getResponseBuyUrl(item) {
+  if (!isWeakStoreUrl(item?.buyUrl)) {
+    return item.buyUrl;
+  }
+
+  return buildStoreSearchUrl(item);
 }
 
 module.exports = async function handler(req, res) {
@@ -1182,7 +1139,6 @@ module.exports = async function handler(req, res) {
 
   try {
     const { userId, profile, filters, wardrobe, learningMemory } = req.body || {};
-
     const normalizedUserId = normalizeUserId(userId);
 
     if (!normalizedUserId) {
@@ -1251,40 +1207,43 @@ module.exports = async function handler(req, res) {
       reasoning = aiSelection.reasoning;
     } catch (aiError) {
       console.error("smart-shopping AI selection failed:", aiError);
-      selectedProductIds = buildFallbackSelection(shortlistedProducts);
+      selectedProductIds = buildFallbackSelection(shortlistedProducts, MIN_RESULTS);
       reasoning = [
-        "Using a fallback shopping ranking because the AI selector was temporarily unavailable.",
+        "These pieces were matched using your profile, selected filters, and learned shopping preferences.",
       ];
     }
 
     if (!Array.isArray(selectedProductIds) || selectedProductIds.length === 0) {
-      selectedProductIds = buildFallbackSelection(shortlistedProducts);
+      selectedProductIds = buildFallbackSelection(shortlistedProducts, MIN_RESULTS);
     }
 
     const selectedIdSet = new Set(selectedProductIds);
     let results = shortlistedProducts.filter((item) => selectedIdSet.has(item.id));
 
-    if (results.length === 0) {
-      results = shortlistedProducts.slice(0, 6);
-    }
-
     const orderedResults = selectedProductIds
       .map((id) => results.find((item) => item.id === id))
       .filter(Boolean);
 
-    const finalResults = orderedResults.length > 0
-      ? orderedResults
-      : results.slice(0, 6);
+    let finalResults =
+      orderedResults.length > 0 ? orderedResults : results.slice(0, MIN_RESULTS);
+
+    if (finalResults.length < MIN_RESULTS) {
+      const extraItems = shortlistedProducts.filter(
+        (item) => !finalResults.some((entry) => entry.id === item.id)
+      );
+
+      finalResults = [...finalResults, ...extraItems].slice(0, MIN_RESULTS);
+    }
 
     const autoLearnedMemory = mergeLearningMemory(mergedLearningMemory, {
       likedStores: finalResults
-        .slice(0, 3)
+        .slice(0, 5)
         .map((item) => normalizeString(item.store)),
       likedColors: finalResults
-        .slice(0, 3)
+        .slice(0, 5)
         .map((item) => normalizeString(item.color)),
       likedCategories: finalResults
-        .slice(0, 3)
+        .slice(0, 5)
         .map((item) => normalizeString(item.category)),
       recentlyUsedFilters: {
         selectedCategory: normalizeString(filters?.selectedCategory),
@@ -1318,13 +1277,13 @@ module.exports = async function handler(req, res) {
         heightCategoryTags: item.heightCategoryTags,
         occasionTags: item.occasionTags,
         image: item.image,
-        buyUrl: item.buyUrl,
+        buyUrl: getResponseBuyUrl(item),
       })),
       reasoning:
         reasoning.length > 0
           ? reasoning
           : [
-              "These items were chosen to match the user's profile, filters, and learned shopping preferences.",
+              "These pieces were chosen to match your profile, selected filters, and learned shopping preferences.",
             ],
       remaining,
       limit,
