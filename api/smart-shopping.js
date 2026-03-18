@@ -399,7 +399,6 @@ function getSecondsUntilNextUtcMidnight() {
   const next = new Date(now);
   next.setUTCDate(now.getUTCDate() + 1);
   next.setUTCHours(0, 0, 0, 0);
-
   return Math.max(60, Math.floor((next.getTime() - now.getTime()) / 1000));
 }
 
@@ -425,9 +424,7 @@ function uniqueList(values) {
 }
 
 function toNumber(value) {
-  if (typeof value === "number" && !Number.isNaN(value)) {
-    return value;
-  }
+  if (typeof value === "number" && !Number.isNaN(value)) return value;
 
   const cleaned = String(value || "")
     .replace(/[^0-9.]/g, "")
@@ -447,13 +444,7 @@ function getProUserIds() {
 }
 
 function getUserPlan(userId) {
-  const proUserIds = getProUserIds();
-
-  if (proUserIds.includes(userId)) {
-    return "pro";
-  }
-
-  return "free";
+  return getProUserIds().includes(userId) ? "pro" : "free";
 }
 
 function getPlanLimit(plan) {
@@ -530,16 +521,20 @@ function getDoNotInclude(profile, filters) {
 
 function getWardrobeColors(wardrobe) {
   if (!Array.isArray(wardrobe)) return [];
-  return [...new Set(
-    wardrobe.map((item) => normalizeString(item?.color)).filter(Boolean)
-  )];
+  return [
+    ...new Set(
+      wardrobe.map((item) => normalizeString(item?.color)).filter(Boolean)
+    ),
+  ];
 }
 
 function getWardrobeCategories(wardrobe) {
   if (!Array.isArray(wardrobe)) return [];
-  return [...new Set(
-    wardrobe.map((item) => normalizeString(item?.category)).filter(Boolean)
-  )];
+  return [
+    ...new Set(
+      wardrobe.map((item) => normalizeString(item?.category)).filter(Boolean)
+    ),
+  ];
 }
 
 function buildGapCategoryHints(wardrobe) {
@@ -728,17 +723,27 @@ function scoreCatalogItem(item, context) {
   const itemStore = normalizeString(item.store);
   const itemCategory = normalizeString(item.category);
   const itemColor = normalizeString(item.color);
+  const itemCurrency = normalizeString(item.currency);
+  const itemCountry = normalizeString(item.country);
   const itemStyleTags = normalizeList(item.styleTags);
   const itemBodyTypeTags = normalizeList(item.bodyTypeTags);
   const itemHeightTags = normalizeList(item.heightCategoryTags);
   const itemOccasionTags = normalizeList(item.occasionTags);
 
-  if (context.preferredStores.includes(itemStore)) score += 20;
-  if (context.selectedStores.includes(itemStore)) score += 18;
+  if (context.userCurrency && itemCurrency === context.userCurrency) score += 35;
+  if (context.userCountry && itemCountry === context.userCountry) score += 30;
+
+  if (context.preferredStores.includes(itemStore)) score += 18;
+  if (context.selectedStores.includes(itemStore)) score += 24;
+
   if (context.stylePreference && itemStyleTags.includes(context.stylePreference)) score += 22;
   if (context.bodyType && itemBodyTypeTags.includes(context.bodyType)) score += 16;
   if (context.heightCategory && itemHeightTags.includes(context.heightCategory)) score += 12;
-  if (context.selectedOccasion && itemOccasionTags.includes(context.selectedOccasion)) score += 14;
+
+  if (context.selectedOccasion && itemOccasionTags.includes(context.selectedOccasion)) {
+    score += 14;
+  }
+
   if (!context.selectedOccasion && context.profileOccasion && itemOccasionTags.includes(context.profileOccasion)) {
     score += 8;
   }
@@ -765,93 +770,125 @@ function scoreCatalogItem(item, context) {
   return score;
 }
 
-function buildCatalogShortlist(profile, filters, wardrobe, learningMemory) {
-  const gender = normalizeString(profile?.gender);
-  const country = normalizeString(profile?.country);
-  const stylePreference = normalizeString(profile?.stylePreference);
-  const bodyType = normalizeString(profile?.bodyType);
-  const heightCategory = normalizeString(profile?.heightCategory);
-  const skinTone = normalizeString(profile?.skinTone);
-
-  const preferredStores = getPreferredStores(profile);
-  const selectedStores = normalizeList(filters?.selectedStores);
-  const selectedCategory = normalizeString(filters?.selectedCategory);
-  const selectedOccasion = normalizeString(filters?.selectedOccasion);
-  const profileOccasion = normalizeString(profile?.occasion);
-  const minBudget = toNumber(filters?.minBudget);
-  const maxBudget = toNumber(filters?.maxBudget);
-
-  const wardrobeColors = getWardrobeColors(wardrobe);
-  const missingCategories = buildGapCategoryHints(wardrobe);
-  const blockedTerms = getDoNotInclude(profile, filters);
-
-  const context = {
-    preferredStores,
-    selectedStores,
-    stylePreference,
-    bodyType,
-    heightCategory,
-    selectedOccasion,
-    profileOccasion,
-    wardrobeColors,
-    missingCategories,
+function buildContext(profile, filters, wardrobe, learningMemory) {
+  return {
+    gender: normalizeString(profile?.gender),
+    country: normalizeString(profile?.country),
+    currency: normalizeString(
+      filters?.currency || profile?.currency || ""
+    ),
+    stylePreference: normalizeString(profile?.stylePreference),
+    bodyType: normalizeString(profile?.bodyType),
+    heightCategory: normalizeString(profile?.heightCategory),
+    selectedCategory: normalizeString(filters?.selectedCategory),
+    selectedOccasion: normalizeString(filters?.selectedOccasion),
+    profileOccasion: normalizeString(profile?.occasion),
+    selectedStores: normalizeList(filters?.selectedStores),
+    preferredStores: getPreferredStores(profile),
+    minBudget: toNumber(filters?.minBudget),
+    maxBudget: toNumber(filters?.maxBudget),
+    wardrobeColors: getWardrobeColors(wardrobe),
+    missingCategories: buildGapCategoryHints(wardrobe),
+    blockedTerms: getDoNotInclude(profile, filters),
     learningMemory,
   };
+}
 
-  let filtered = STORE_CATALOG.filter((item) => {
-    const itemGender = normalizeString(item.gender);
-    const itemCountry = normalizeString(item.country);
-    const itemStore = normalizeString(item.store);
-    const itemCategory = normalizeString(item.category);
-    const itemOccasions = normalizeList(item.occasionTags);
+function applyCatalogFilter(item, context, mode) {
+  const itemGender = normalizeString(item.gender);
+  const itemCountry = normalizeString(item.country);
+  const itemCurrency = normalizeString(item.currency);
+  const itemStore = normalizeString(item.store);
+  const itemCategory = normalizeString(item.category);
+  const itemOccasions = normalizeList(item.occasionTags);
 
-    if (gender && itemGender !== gender) return false;
-    if (country && itemCountry !== country) return false;
-    if (preferredStores.length > 0 && !preferredStores.includes(itemStore)) return false;
-    if (selectedStores.length > 0 && !selectedStores.includes(itemStore)) return false;
-    if (selectedCategory && itemCategory !== selectedCategory) return false;
-    if (selectedOccasion && !itemOccasions.includes(selectedOccasion)) return false;
-    if (minBudget !== null && item.price < minBudget) return false;
-    if (maxBudget !== null && item.price > maxBudget) return false;
-    if (matchesDoNotInclude(item, blockedTerms)) return false;
+  if (context.gender && itemGender !== context.gender) return false;
+  if (matchesDoNotInclude(item, context.blockedTerms)) return false;
 
+  if (context.selectedStores.length > 0 && !context.selectedStores.includes(itemStore)) {
+    return false;
+  }
+
+  if (mode === "strict") {
+    if (context.country && itemCountry !== context.country) return false;
+    if (context.currency && itemCurrency !== context.currency) return false;
+    if (context.preferredStores.length > 0 && !context.preferredStores.includes(itemStore)) {
+      return false;
+    }
+    if (context.selectedCategory && itemCategory !== context.selectedCategory) return false;
+    if (context.selectedOccasion && !itemOccasions.includes(context.selectedOccasion)) {
+      return false;
+    }
+    if (context.minBudget !== null && item.price < context.minBudget) return false;
+    if (context.maxBudget !== null && item.price > context.maxBudget) return false;
     return true;
-  });
+  }
 
-  if (filtered.length === 0) {
-    filtered = STORE_CATALOG.filter((item) => {
-      const itemGender = normalizeString(item.gender);
-      const itemStore = normalizeString(item.store);
+  if (mode === "country-currency-relaxed") {
+    if (context.country && itemCountry !== context.country) return false;
+    if (context.currency && itemCurrency !== context.currency) return false;
+    if (context.selectedCategory && itemCategory !== context.selectedCategory) return false;
+    if (context.minBudget !== null && item.price < context.minBudget) return false;
+    if (context.maxBudget !== null && item.price > context.maxBudget) return false;
+    return true;
+  }
 
-      if (gender && itemGender !== gender) return false;
-      if (preferredStores.length > 0 && !preferredStores.includes(itemStore)) return false;
-      if (matchesDoNotInclude(item, blockedTerms)) return false;
+  if (mode === "currency-relaxed") {
+    if (context.currency && itemCurrency !== context.currency) return false;
+    if (context.minBudget !== null && item.price < context.minBudget) return false;
+    if (context.maxBudget !== null && item.price > context.maxBudget) return false;
+    return true;
+  }
 
-      return true;
-    });
+  if (mode === "budget-relaxed") {
+    if (context.currency && itemCurrency !== context.currency) return false;
+    return true;
+  }
+
+  return true;
+}
+
+function buildCatalogShortlist(profile, filters, wardrobe, learningMemory) {
+  const context = buildContext(profile, filters, wardrobe, learningMemory);
+
+  const modes = [
+    "strict",
+    "country-currency-relaxed",
+    "currency-relaxed",
+    "budget-relaxed",
+    "broad",
+  ];
+
+  let filtered = [];
+
+  for (const mode of modes) {
+    filtered = STORE_CATALOG.filter((item) => applyCatalogFilter(item, context, mode));
+    if (filtered.length >= MIN_RESULTS || filtered.length > 0) {
+      break;
+    }
   }
 
   return filtered
     .map((item) => {
-      const score = scoreCatalogItem(item, context);
+      const score = scoreCatalogItem(item, {
+        preferredStores: context.preferredStores,
+        selectedStores: context.selectedStores,
+        stylePreference: context.stylePreference,
+        bodyType: context.bodyType,
+        heightCategory: context.heightCategory,
+        selectedOccasion: context.selectedOccasion,
+        profileOccasion: context.profileOccasion,
+        wardrobeColors: context.wardrobeColors,
+        missingCategories: context.missingCategories,
+        learningMemory: context.learningMemory,
+        userCurrency: context.currency,
+        userCountry: context.country,
+      });
 
       return {
         ...item,
         rankingScore: score,
         matchSignals: {
-          preferredStoreMatch: preferredStores.includes(normalizeString(item.store)),
-          styleMatch: normalizeList(item.styleTags).includes(stylePreference),
-          bodyTypeMatch: normalizeList(item.bodyTypeTags).includes(bodyType),
-          heightMatch: normalizeList(item.heightCategoryTags).includes(heightCategory),
-          wardrobeColorMatch: wardrobeColors.includes(normalizeString(item.color)),
-          missingCategoryMatch: missingCategories.includes(normalizeString(item.category)),
-          likedStoreMatch: learningMemory.likedStores.includes(normalizeString(item.store)),
-          likedColorMatch: learningMemory.likedColors.includes(normalizeString(item.color)),
-          likedCategoryMatch: learningMemory.likedCategories.includes(normalizeString(item.category)),
-          blockedByDoNotInclude: false,
-          skinToneHint: skinTone,
-          selectedOccasion,
-          selectedCategory,
           rankingScore: score,
         },
       };
@@ -876,9 +913,6 @@ function buildProductContextForPrompt(products) {
     bodyTypeTags: item.bodyTypeTags,
     heightCategoryTags: item.heightCategoryTags,
     occasionTags: item.occasionTags,
-    image: item.image,
-    buyUrl: item.buyUrl,
-    matchSignals: item.matchSignals,
     rankingScore: item.rankingScore,
   }));
 }
@@ -951,32 +985,25 @@ You are a premium AI shopping stylist for a fashion app called StyleSync.
 You must choose the best exact products from the provided catalog only.
 
 Goals:
-- Select products that best suit the user's body type, height category, style preference, gender, budget, preferred stores, country, and occasion.
+- Select products that best suit the user's body type, height category, style preference, gender, budget, preferred stores, country, currency, and occasion.
 - Use the style learning memory to adapt recommendations based on likes, dislikes, saved shopping looks, and recent filter behavior.
 - Prefer items that feel flattering, wearable, modern, everyday, and polished.
 - Avoid extreme or runway-style fashion.
 - Never recommend anything that conflicts with the user's doNotInclude preferences.
-- Prefer items that fill wardrobe gaps or coordinate with wardrobe colors when that helps.
 - Do not invent products.
 - Return JSON only.
 - Do not wrap JSON in markdown.
 
 Return exactly this JSON shape:
 {
-  "reasoning": [
-    "reason 1",
-    "reason 2",
-    "reason 3"
-  ],
-  "selectedProductIds": [
-    "product-id-1"
-  ]
+  "reasoning": ["reason 1", "reason 2", "reason 3"],
+  "selectedProductIds": ["product-id-1"]
 }
 
 Rules for selectedProductIds:
 - Return up to 20 IDs when available.
-- Prefer diversity across categories when possible.
-- Keep results practical and wearable.
+- Prefer the user's currency when possible.
+- Prefer practical variety across categories when possible.
 `.trim();
 
   const userPrompt = `
@@ -994,17 +1021,6 @@ ${JSON.stringify(learningMemory || {}, null, 2)}
 
 Available product catalog shortlist:
 ${JSON.stringify(productContext, null, 2)}
-
-Important rules:
-- Use only product IDs from the shortlist.
-- Respect budget, preferred stores, and doNotInclude.
-- Use learning memory to favor liked stores, colors, and categories.
-- Avoid items similar to disliked choices.
-- Prefer wearable, modern, real-life style.
-- Return up to 20 products if the shortlist supports it.
-
-Please choose the best exact products from the shortlist only.
-Keep reasoning short, practical, and specific.
 `.trim();
 
   const requestBody = {
@@ -1094,19 +1110,15 @@ function buildStoreSearchUrl(item) {
   if (store.includes("h&m") || store.includes("hm")) {
     return `https://www2.hm.com/en_gb/search-results.html?q=${query}`;
   }
-
   if (store.includes("zara")) {
     return `https://www.zara.com/uk/en/search?searchTerm=${query}`;
   }
-
   if (store.includes("mango")) {
     return `https://shop.mango.com/gb/search?kw=${query}`;
   }
-
   if (store.includes("asos")) {
     return `https://www.asos.com/search/?q=${query}`;
   }
-
   if (store.includes("zalando")) {
     return `https://www.zalando.nl/catalog/?q=${query}`;
   }
@@ -1117,10 +1129,7 @@ function buildStoreSearchUrl(item) {
 }
 
 function getResponseBuyUrl(item) {
-  if (!isWeakStoreUrl(item?.buyUrl)) {
-    return item.buyUrl;
-  }
-
+  if (!isWeakStoreUrl(item?.buyUrl)) return item.buyUrl;
   return buildStoreSearchUrl(item);
 }
 
@@ -1231,7 +1240,6 @@ module.exports = async function handler(req, res) {
       const extraItems = shortlistedProducts.filter(
         (item) => !finalResults.some((entry) => entry.id === item.id)
       );
-
       finalResults = [...finalResults, ...extraItems].slice(0, MIN_RESULTS);
     }
 
