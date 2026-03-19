@@ -1119,21 +1119,22 @@ function buildGoogleProductSearchUrl(item) {
 
   const normalizedStore = normalizeString(store);
 
-  if (normalizedStore.includes("mango")) {
-    const mangoQuery = [
-      `"${title}"`,
-      "Mango",
-      color,
-      category,
-      currency,
-      country,
-      "buy",
-    ]
-      .filter(Boolean)
-      .join(" ");
+ if (normalizedStore.includes("mango")) {
+  const mangoQuery = [
+    `"${title}"`,
+    "Mango",
+    color,
+    category,
+    currency,
+    country,
+    "buy",
+    "stylesync-mango-test",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
-    return `https://www.google.com/search?q=${encodeURIComponent(mangoQuery)}`;
-  }
+  return `https://www.google.com/search?q=${encodeURIComponent(mangoQuery)}`;
+}
 
   const siteHints = {
     zara: "site:zara.com",
