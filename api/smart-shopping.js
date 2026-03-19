@@ -1117,13 +1117,30 @@ function buildGoogleProductSearchUrl(item) {
   const currency = String(item?.currency || "").trim();
   const country = getCountrySearchHint(String(item?.country || "").trim());
 
+  const normalizedStore = normalizeString(store);
+
+  if (normalizedStore.includes("mango")) {
+    const mangoQuery = [
+      `"${title}"`,
+      "Mango",
+      color,
+      category,
+      currency,
+      country,
+      "buy",
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+    return `https://www.google.com/search?q=${encodeURIComponent(mangoQuery)}`;
+  }
+
   const siteHints = {
     zara: "site:zara.com",
     "h&m": 'site:hm.com OR site:www2.hm.com',
     hm: 'site:hm.com OR site:www2.hm.com',
     asos: "site:asos.com",
     zalando: "site:zalando.nl OR site:zalando.com",
-    mango: "site:mango.com OR site:shop.mango.com",
     sezane: "site:sezane.com",
     revolve: "site:revolve.com",
     nordstrom: "site:nordstrom.com",
@@ -1131,12 +1148,11 @@ function buildGoogleProductSearchUrl(item) {
     "the iconic": "site:theiconic.com.au",
   };
 
-  const normalizedStore = normalizeString(store);
-  const siteHint =
+  const matchedKey =
     Object.keys(siteHints).find((key) => normalizedStore.includes(key)) || "";
 
   const searchQuery = [
-    siteHint ? siteHints[siteHint] : "",
+    matchedKey ? siteHints[matchedKey] : "",
     `"${title}"`,
     store,
     color,
