@@ -774,9 +774,7 @@ function buildContext(profile, filters, wardrobe, learningMemory) {
   return {
     gender: normalizeString(profile?.gender),
     country: normalizeString(profile?.country),
-    currency: normalizeString(
-      filters?.currency || profile?.currency || ""
-    ),
+    currency: normalizeString(filters?.currency || profile?.currency || ""),
     stylePreference: normalizeString(profile?.stylePreference),
     bodyType: normalizeString(profile?.bodyType),
     heightCategory: normalizeString(profile?.heightCategory),
@@ -816,9 +814,7 @@ function applyCatalogFilter(item, context, mode) {
       return false;
     }
     if (context.selectedCategory && itemCategory !== context.selectedCategory) return false;
-    if (context.selectedOccasion && !itemOccasions.includes(context.selectedOccasion)) {
-      return false;
-    }
+    if (context.selectedOccasion && !itemOccasions.includes(context.selectedOccasion)) return false;
     if (context.minBudget !== null && item.price < context.minBudget) return false;
     if (context.maxBudget !== null && item.price > context.maxBudget) return false;
     return true;
@@ -888,9 +884,7 @@ function buildCatalogShortlist(profile, filters, wardrobe, learningMemory) {
       return {
         ...item,
         rankingScore: score,
-        matchSignals: {
-          rankingScore: score,
-        },
+        matchSignals: { rankingScore: score },
       };
     })
     .sort((a, b) => b.rankingScore - a.rankingScore);
@@ -1097,40 +1091,72 @@ function isWeakStoreUrl(url) {
     normalized.endsWith(".com.au/") ||
     normalized.includes("/women") ||
     normalized.includes("/men") ||
-    normalized.includes("/new-in")
+    normalized.includes("/new-in") ||
+    normalized.includes("/search") ||
+    normalized.includes("search?") ||
+    normalized.includes("query=")
   );
 }
 
-function buildStoreSearchUrl(item) {
-  const store = normalizeString(item?.store);
-  const query = encodeURIComponent(
-    `${item?.title || ""} ${item?.color || ""} ${item?.category || ""}`.trim()
-  );
+function getCountrySearchHint(country) {
+  const normalized = normalizeString(country);
+  if (normalized === "nl") return "Netherlands";
+  if (normalized === "uk" || normalized === "gb") return "United Kingdom";
+  if (normalized === "us") return "United States";
+  if (normalized === "fr") return "France";
+  if (normalized === "es") return "Spain";
+  if (normalized === "au") return "Australia";
+  return country || "";
+}
 
-  if (store.includes("h&m") || store.includes("hm")) {
-    return `https://www2.hm.com/en_gb/search-results.html?q=${query}`;
-  }
-  if (store.includes("zara")) {
-    return `https://www.zara.com/uk/en/search?searchTerm=${query}`;
-  }
-  if (store.includes("mango")) {
-    return `https://shop.mango.com/gb/search?kw=${query}`;
-  }
-  if (store.includes("asos")) {
-    return `https://www.asos.com/search/?q=${query}`;
-  }
-  if (store.includes("zalando")) {
-    return `https://www.zalando.nl/catalog/?q=${query}`;
-  }
+function buildGoogleProductSearchUrl(item) {
+  const store = String(item?.store || "").trim();
+  const title = String(item?.title || "").trim();
+  const color = String(item?.color || "").trim();
+  const category = String(item?.category || "").trim();
+  const currency = String(item?.currency || "").trim();
+  const country = getCountrySearchHint(String(item?.country || "").trim());
 
-  return `https://www.google.com/search?q=${encodeURIComponent(
-    `${item?.store || ""} ${item?.title || ""} ${item?.color || ""} ${item?.category || ""}`
-  )}`;
+  const siteHints = {
+    zara: "site:zara.com",
+    "h&m": 'site:hm.com OR site:www2.hm.com',
+    hm: 'site:hm.com OR site:www2.hm.com',
+    asos: "site:asos.com",
+    zalando: "site:zalando.nl OR site:zalando.com",
+    mango: "site:mango.com OR site:shop.mango.com",
+    sezane: "site:sezane.com",
+    revolve: "site:revolve.com",
+    nordstrom: "site:nordstrom.com",
+    selfridges: "site:selfridges.com",
+    "the iconic": "site:theiconic.com.au",
+  };
+
+  const normalizedStore = normalizeString(store);
+  const siteHint =
+    Object.keys(siteHints).find((key) => normalizedStore.includes(key)) || "";
+
+  const searchQuery = [
+    siteHint ? siteHints[siteHint] : "",
+    `"${title}"`,
+    store,
+    color,
+    category,
+    currency,
+    country,
+    "buy",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  return `https://www.google.com/search?q=${encodeURIComponent(searchQuery)}`;
 }
 
 function getResponseBuyUrl(item) {
-  if (!isWeakStoreUrl(item?.buyUrl)) return item.buyUrl;
-  return buildStoreSearchUrl(item);
+  if (!isWeakStoreUrl(item?.buyUrl)) {
+    return item.buyUrl;
+  }
+
+  return buildGoogleProductSearchUrl(item);
 }
 
 module.exports = async function handler(req, res) {
