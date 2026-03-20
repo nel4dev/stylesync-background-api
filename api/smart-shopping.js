@@ -684,13 +684,20 @@ function mergeLearningMemory(existingMemory, incomingMemory) {
 
   return {
     likedItemIds: uniqueList([...a.likedItemIds, ...b.likedItemIds]).slice(-200),
-    dislikedItemIds: uniqueList([...a.dislikedItemIds, ...b.dislikedItemIds]).slice(-200),
+    dislikedItemIds: uniqueList([...a.dislikedItemIds, ...b.dislikedItemIds]).slice(
+      -200
+    ),
     likedStores: uniqueList([...a.likedStores, ...b.likedStores]).slice(-30),
     dislikedStores: uniqueList([...a.dislikedStores, ...b.dislikedStores]).slice(-30),
     likedColors: uniqueList([...a.likedColors, ...b.likedColors]).slice(-40),
     dislikedColors: uniqueList([...a.dislikedColors, ...b.dislikedColors]).slice(-40),
-    likedCategories: uniqueList([...a.likedCategories, ...b.likedCategories]).slice(-20),
-    dislikedCategories: uniqueList([...a.dislikedCategories, ...b.dislikedCategories]).slice(-20),
+    likedCategories: uniqueList([...a.likedCategories, ...b.likedCategories]).slice(
+      -20
+    ),
+    dislikedCategories: uniqueList([
+      ...a.dislikedCategories,
+      ...b.dislikedCategories,
+    ]).slice(-20),
     recentlyUsedFilters: {
       selectedCategory:
         b.recentlyUsedFilters?.selectedCategory ||
@@ -761,7 +768,9 @@ function matchesDoNotInclude(item, blockedTerms) {
     const normalizedTerm = normalizeString(term);
     if (!normalizedTerm) return false;
 
-    return searchableValues.some((value) => value && value.includes(normalizedTerm));
+    return searchableValues.some(
+      (value) => value && value.includes(normalizedTerm)
+    );
   });
 }
 
@@ -785,15 +794,34 @@ function scoreCatalogItem(item, context) {
   if (context.preferredStores.includes(itemStore)) score += 18;
   if (context.selectedStores.includes(itemStore)) score += 24;
 
-  if (context.stylePreference && itemStyleTags.includes(context.stylePreference)) score += 22;
-  if (context.bodyType && itemBodyTypeTags.includes(context.bodyType)) score += 16;
-  if (context.heightCategory && itemHeightTags.includes(context.heightCategory)) score += 12;
+  if (
+    context.stylePreference &&
+    itemStyleTags.includes(context.stylePreference)
+  ) {
+    score += 22;
+  }
+  if (context.bodyType && itemBodyTypeTags.includes(context.bodyType)) {
+    score += 16;
+  }
+  if (
+    context.heightCategory &&
+    itemHeightTags.includes(context.heightCategory)
+  ) {
+    score += 12;
+  }
 
-  if (context.selectedOccasion && itemOccasionTags.includes(context.selectedOccasion)) {
+  if (
+    context.selectedOccasion &&
+    itemOccasionTags.includes(context.selectedOccasion)
+  ) {
     score += 14;
   }
 
-  if (!context.selectedOccasion && context.profileOccasion && itemOccasionTags.includes(context.profileOccasion)) {
+  if (
+    !context.selectedOccasion &&
+    context.profileOccasion &&
+    itemOccasionTags.includes(context.profileOccasion)
+  ) {
     score += 8;
   }
 
@@ -852,36 +880,63 @@ function applyCatalogFilter(item, context, mode) {
   if (context.gender && itemGender !== context.gender) return false;
   if (matchesDoNotInclude(item, context.blockedTerms)) return false;
 
-  if (context.selectedStores.length > 0 && !context.selectedStores.includes(itemStore)) {
+  if (
+    context.selectedStores.length > 0 &&
+    !context.selectedStores.includes(itemStore)
+  ) {
     return false;
   }
 
   if (mode === "strict") {
     if (context.country && itemCountry !== context.country) return false;
     if (context.currency && itemCurrency !== context.currency) return false;
-    if (context.preferredStores.length > 0 && !context.preferredStores.includes(itemStore)) {
+    if (
+      context.preferredStores.length > 0 &&
+      !context.preferredStores.includes(itemStore)
+    ) {
       return false;
     }
-    if (context.selectedCategory && itemCategory !== context.selectedCategory) return false;
-    if (context.selectedOccasion && !itemOccasions.includes(context.selectedOccasion)) return false;
-    if (context.minBudget !== null && item.price < context.minBudget) return false;
-    if (context.maxBudget !== null && item.price > context.maxBudget) return false;
+    if (context.selectedCategory && itemCategory !== context.selectedCategory) {
+      return false;
+    }
+    if (
+      context.selectedOccasion &&
+      !itemOccasions.includes(context.selectedOccasion)
+    ) {
+      return false;
+    }
+    if (context.minBudget !== null && item.price < context.minBudget) {
+      return false;
+    }
+    if (context.maxBudget !== null && item.price > context.maxBudget) {
+      return false;
+    }
     return true;
   }
 
   if (mode === "country-currency-relaxed") {
     if (context.country && itemCountry !== context.country) return false;
     if (context.currency && itemCurrency !== context.currency) return false;
-    if (context.selectedCategory && itemCategory !== context.selectedCategory) return false;
-    if (context.minBudget !== null && item.price < context.minBudget) return false;
-    if (context.maxBudget !== null && item.price > context.maxBudget) return false;
+    if (context.selectedCategory && itemCategory !== context.selectedCategory) {
+      return false;
+    }
+    if (context.minBudget !== null && item.price < context.minBudget) {
+      return false;
+    }
+    if (context.maxBudget !== null && item.price > context.maxBudget) {
+      return false;
+    }
     return true;
   }
 
   if (mode === "currency-relaxed") {
     if (context.currency && itemCurrency !== context.currency) return false;
-    if (context.minBudget !== null && item.price < context.minBudget) return false;
-    if (context.maxBudget !== null && item.price > context.maxBudget) return false;
+    if (context.minBudget !== null && item.price < context.minBudget) {
+      return false;
+    }
+    if (context.maxBudget !== null && item.price > context.maxBudget) {
+      return false;
+    }
     return true;
   }
 
@@ -907,7 +962,9 @@ function buildCatalogShortlist(profile, filters, wardrobe, learningMemory) {
   let filtered = [];
 
   for (const mode of modes) {
-    filtered = STORE_CATALOG.filter((item) => applyCatalogFilter(item, context, mode));
+    filtered = STORE_CATALOG.filter((item) =>
+      applyCatalogFilter(item, context, mode)
+    );
     if (filtered.length >= MIN_RESULTS || filtered.length > 0) {
       break;
     }
@@ -1058,7 +1115,7 @@ User filters:
 ${JSON.stringify(filters || {}, null, 2)}
 
 Saved wardrobe:
-${JSON.stringify(wardrobe || [], null, 2)}
+${JSON.stringify(wardrobe || {}, null, 2)}
 
 Style learning memory:
 ${JSON.stringify(learningMemory || {}, null, 2)}
