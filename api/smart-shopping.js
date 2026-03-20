@@ -12,6 +12,45 @@ const MIN_RESULTS = 20;
 const memoryStore = global.__stylesyncShoppingStore || new Map();
 global.__stylesyncShoppingStore = memoryStore;
 
+const CATALOG_IMAGE_OVERRIDES = {
+  "zara-women-structured-cream-blazer":
+    "https://images.unsplash.com/photo-1591047139829-d91aecb6caea?auto=format&fit=crop&w=900&q=80",
+  "hm-women-high-waist-black-trousers":
+    "https://images.unsplash.com/photo-1506629905607-d9b1a3b2f16b?auto=format&fit=crop&w=900&q=80",
+  "asos-women-satin-midi-skirt":
+    "https://images.unsplash.com/photo-1583496661160-fb5886a13d57?auto=format&fit=crop&w=900&q=80",
+  "zalando-women-cropped-tweed-jacket":
+    "https://images.unsplash.com/photo-1529139574466-a303027c1d8b?auto=format&fit=crop&w=900&q=80",
+  "mango-women-wide-leg-trousers":
+    "https://images.unsplash.com/photo-1551232864-3f0890e580d9?auto=format&fit=crop&w=900&q=80",
+  "sezane-women-knit-top":
+    "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?auto=format&fit=crop&w=900&q=80",
+  "revolve-women-wrap-dress":
+    "https://images.unsplash.com/photo-1496747611176-843222e1e57c?auto=format&fit=crop&w=900&q=80",
+  "nordstrom-women-longline-coat":
+    "https://images.unsplash.com/photo-1503342217505-b0a15ec3261c?auto=format&fit=crop&w=900&q=80",
+  "asos-women-monochrome-set-top":
+    "https://images.unsplash.com/photo-1521572267360-ee0c2909d518?auto=format&fit=crop&w=900&q=80",
+  "zara-women-straight-denim":
+    "https://images.unsplash.com/photo-1541099649105-f69ad21f3246?auto=format&fit=crop&w=900&q=80",
+  "selfridges-women-occasion-heels":
+    "https://images.unsplash.com/photo-1543163521-1bf539c55dd2?auto=format&fit=crop&w=900&q=80",
+  "theiconic-women-oversized-shirt":
+    "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?auto=format&fit=crop&w=900&q=80",
+  "hm-men-tailored-navy-blazer":
+    "https://images.unsplash.com/photo-1593032465171-8bd9f97ff1e1?auto=format&fit=crop&w=900&q=80",
+  "zara-men-straight-trousers":
+    "https://images.unsplash.com/photo-1473966968600-fa801b869a1a?auto=format&fit=crop&w=900&q=80",
+  "asos-men-overshirt":
+    "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=900&q=80",
+  "mango-men-lightweight-knit":
+    "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?auto=format&fit=crop&w=900&q=80",
+  "nordstrom-men-long-coat":
+    "https://images.unsplash.com/photo-1507679799987-c73779587ccf?auto=format&fit=crop&w=900&q=80",
+  "zalando-men-smart-sneakers":
+    "https://images.unsplash.com/photo-1542291026-7eec264c27ff?auto=format&fit=crop&w=900&q=80",
+};
+
 const STORE_CATALOG = [
   {
     id: "zara-women-structured-cream-blazer",
@@ -30,7 +69,7 @@ const STORE_CATALOG = [
     heightCategoryTags: ["regular", "tall"],
     occasionTags: ["work", "dinner"],
     image:
-      "https://images.unsplash.com/photo-1594633312681-425c7b97ccd1?auto=format&fit=crop&w=900&q=80",
+      "https://images.unsplash.com/photo-1591047139829-d91aecb6caea?auto=format&fit=crop&w=900&q=80",
     buyUrl: "https://www.zara.com",
   },
   {
@@ -130,7 +169,7 @@ const STORE_CATALOG = [
     heightCategoryTags: ["petite", "regular", "tall"],
     occasionTags: ["casual", "work", "dinner"],
     image:
-      "https://images.unsplash.com/photo-1483985988355-763728e1935b?auto=format&fit=crop&w=900&q=80",
+      "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?auto=format&fit=crop&w=900&q=80",
     buyUrl: "https://www.sezane.com",
   },
   {
@@ -170,7 +209,7 @@ const STORE_CATALOG = [
     heightCategoryTags: ["regular", "tall"],
     occasionTags: ["work", "travel", "dinner"],
     image:
-      "https://images.unsplash.com/photo-1541099649105-f69ad21f3246?auto=format&fit=crop&w=900&q=80",
+      "https://images.unsplash.com/photo-1503342217505-b0a15ec3261c?auto=format&fit=crop&w=900&q=80",
     buyUrl: "https://www.nordstrom.com",
   },
   {
@@ -256,7 +295,7 @@ const STORE_CATALOG = [
     heightCategoryTags: ["regular", "tall"],
     occasionTags: ["casual", "travel", "work"],
     image:
-      "https://images.unsplash.com/photo-1529139574466-a303027c1d8b?auto=format&fit=crop&w=900&q=80",
+      "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?auto=format&fit=crop&w=900&q=80",
     buyUrl: "https://www.theiconic.com.au",
   },
   {
@@ -380,6 +419,15 @@ const STORE_CATALOG = [
     buyUrl: "https://www.zalando.nl",
   },
 ];
+
+function getCatalogImage(item) {
+  if (CATALOG_IMAGE_OVERRIDES[item.id]) {
+    return CATALOG_IMAGE_OVERRIDES[item.id];
+  }
+
+  return item.image;
+}
+
 function setCorsHeaders(res) {
   res.setHeader("Access-Control-Allow-Credentials", "true");
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -696,6 +744,7 @@ async function saveStoredLearningMemory(userId, learningMemory) {
 
   memoryStore.set(key, normalized);
 }
+
 function matchesDoNotInclude(item, blockedTerms) {
   if (!blockedTerms || blockedTerms.length === 0) return false;
 
@@ -883,6 +932,7 @@ function buildCatalogShortlist(profile, filters, wardrobe, learningMemory) {
 
       return {
         ...item,
+        image: getCatalogImage(item),
         rankingScore: score,
         matchSignals: { rankingScore: score },
       };
@@ -1072,6 +1122,7 @@ ${JSON.stringify(productContext, null, 2)}
 
   return { selectedProductIds, reasoning };
 }
+
 function buildFallbackSelection(shortlistedProducts, count = MIN_RESULTS) {
   return shortlistedProducts.slice(0, count).map((item) => item.id);
 }
@@ -1119,22 +1170,21 @@ function buildGoogleProductSearchUrl(item) {
 
   const normalizedStore = normalizeString(store);
 
- if (normalizedStore.includes("mango")) {
-  const mangoQuery = [
-    `"${title}"`,
-    "Mango",
-    color,
-    category,
-    currency,
-    country,
-    "buy",
-    "stylesync-mango-test",
-  ]
-    .filter(Boolean)
-    .join(" ");
+  if (normalizedStore.includes("mango")) {
+    const mangoQuery = [
+      `"${title}"`,
+      "Mango",
+      color,
+      category,
+      currency,
+      country,
+      "buy",
+    ]
+      .filter(Boolean)
+      .join(" ");
 
-  return `https://www.google.com/search?q=${encodeURIComponent(mangoQuery)}`;
-}
+    return `https://www.google.com/search?q=${encodeURIComponent(mangoQuery)}`;
+  }
 
   const siteHints = {
     zara: "site:zara.com",
@@ -1327,7 +1377,7 @@ module.exports = async function handler(req, res) {
         bodyTypeTags: item.bodyTypeTags,
         heightCategoryTags: item.heightCategoryTags,
         occasionTags: item.occasionTags,
-        image: item.image,
+        image: getCatalogImage(item),
         buyUrl: getResponseBuyUrl(item),
       })),
       reasoning:
