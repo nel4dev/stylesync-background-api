@@ -591,6 +591,22 @@ function buildGapCategoryHints(wardrobe) {
   return possible.filter((item) => !categories.includes(item));
 }
 
+function normalizeBodyAnalysis(bodyAnalysis) {
+  const analysis = bodyAnalysis || {};
+
+  return {
+    bodyType: normalizeString(analysis?.bodyType),
+    fitIssues: normalizeList(analysis?.fitIssues),
+    shoppingFocus: normalizeList(analysis?.shoppingFocus),
+    bestClothing: normalizeList(analysis?.bestClothing),
+    bestSilhouettes: normalizeList(analysis?.bestSilhouettes),
+    avoidOrBalance: normalizeList(analysis?.avoidOrBalance),
+    goals: normalizeList(analysis?.goals),
+    mode: normalizeString(analysis?.mode),
+    aiHasRun: analysis?.aiHasRun === true,
+  };
+}
+
 function normalizeLearningMemory(learningMemory) {
   const memory = learningMemory || {};
   const recentlyUsedFilters = memory?.recentlyUsedFilters || {};
@@ -787,6 +803,7 @@ function scoreCatalogItem(item, context) {
   const itemBodyTypeTags = normalizeList(item.bodyTypeTags);
   const itemHeightTags = normalizeList(item.heightCategoryTags);
   const itemOccasionTags = normalizeList(item.occasionTags);
+  const itemFitTags = normalizeList(item.fitTags);
 
   if (context.userCurrency && itemCurrency === context.userCurrency) score += 35;
   if (context.userCountry && itemCountry === context.userCountry) score += 30;
@@ -800,9 +817,18 @@ function scoreCatalogItem(item, context) {
   ) {
     score += 22;
   }
+
   if (context.bodyType && itemBodyTypeTags.includes(context.bodyType)) {
     score += 16;
   }
+
+  if (
+    context.bodyAnalysis?.bodyType &&
+    itemBodyTypeTags.includes(context.bodyAnalysis.bodyType)
+  ) {
+    score += 32;
+  }
+
   if (
     context.heightCategory &&
     itemHeightTags.includes(context.heightCategory)
@@ -844,10 +870,96 @@ function scoreCatalogItem(item, context) {
     if (look.stores.includes(itemStore)) score += 8;
   }
 
+  if (context.bodyAnalysis?.shoppingFocus?.includes(itemCategory)) {
+    score += 22;
+  }
+
+  if (
+    context.bodyAnalysis?.bestClothing?.some(
+      (entry) =>
+        normalizeString(entry).includes(itemCategory) ||
+        normalizeString(entry).includes(itemStore) ||
+        normalizeString(entry).includes(itemColor)
+    )
+  ) {
+    score += 12;
+  }
+
+  if (
+    context.bodyAnalysis?.bestSilhouettes?.some((entry) => {
+      const normalizedEntry = normalizeString(entry);
+      return itemFitTags.some(
+        (fitTag) =>
+          normalizedEntry.includes(fitTag) || fitTag.includes(normalizedEntry)
+      );
+    })
+  ) {
+    score += 14;
+  }
+
+  if (
+    context.bodyAnalysis?.avoidOrBalance?.some((entry) => {
+      const normalizedEntry = normalizeString(entry);
+      return (
+        itemFitTags.some((fitTag) => normalizedEntry.includes(fitTag)) ||
+        itemStyleTags.some((styleTag) => normalizedEntry.includes(styleTag)) ||
+        normalizedEntry.includes(itemCategory)
+      );
+    })
+  ) {
+    score -= 20;
+  }
+
+  if (
+    context.bodyAnalysis?.fitIssues?.includes("long torso") &&
+    itemFitTags.includes("high-waist")
+  ) {
+    score += 12;
+  }
+
+  if (
+    context.bodyAnalysis?.fitIssues?.includes("short neck") &&
+    itemFitTags.some(
+      (fitTag) =>
+        fitTag.includes("open") ||
+        fitTag.includes("clean-line") ||
+        fitTag.includes("lightweight")
+    )
+  ) {
+    score += 10;
+  }
+
+  if (
+    context.bodyAnalysis?.goals?.includes("look taller") &&
+    (itemFitTags.includes("elongating") ||
+      itemFitTags.includes("high-waist") ||
+      itemFitTags.includes("longline"))
+  ) {
+    score += 12;
+  }
+
+  if (
+    context.bodyAnalysis?.goals?.includes("define waist") &&
+    (itemFitTags.includes("wrap") ||
+      itemFitTags.includes("waist-defining") ||
+      itemFitTags.includes("tailored"))
+  ) {
+    score += 12;
+  }
+
+  if (
+    context.bodyAnalysis?.goals?.includes("hide belly") &&
+    (itemFitTags.includes("soft drape") ||
+      itemFitTags.includes("straight") ||
+      itemFitTags.includes("longline"))
+  ) {
+    score += 12;
+  }
+
   return score;
 }
 
-function buildContext(profile, filters, wardrobe, learningMemory) {
+function buildContext(profile, filters, wardrobe, learningMemory, bodyAnalysis) {
   return {
     gender: normalizeString(profile?.gender),
     country: normalizeString(profile?.country),
@@ -866,6 +978,7 @@ function buildContext(profile, filters, wardrobe, learningMemory) {
     missingCategories: buildGapCategoryHints(wardrobe),
     blockedTerms: getDoNotInclude(profile, filters),
     learningMemory,
+    bodyAnalysis: normalizeBodyAnalysis(bodyAnalysis),
   };
 }
 
@@ -948,8 +1061,20 @@ function applyCatalogFilter(item, context, mode) {
   return true;
 }
 
-function buildCatalogShortlist(profile, filters, wardrobe, learningMemory) {
-  const context = buildContext(profile, filters, wardrobe, learningMemory);
+function buildCatalogShortlist(
+  profile,
+  filters,
+  wardrobe,
+  learningMemory,
+  bodyAnalysis
+) {
+  const context = buildContext(
+    profile,
+    filters,
+    wardrobe,
+    learningMemory,
+    bodyAnalysis
+  );
 
   const modes = [
     "strict",
@@ -985,6 +1110,7 @@ function buildCatalogShortlist(profile, filters, wardrobe, learningMemory) {
         learningMemory: context.learningMemory,
         userCurrency: context.currency,
         userCountry: context.country,
+        bodyAnalysis: context.bodyAnalysis,
       });
 
       return {
@@ -1072,6 +1198,7 @@ async function callOpenAiSmartShopping({
   wardrobe,
   learningMemory,
   shortlistedProducts,
+  bodyAnalysis,
 }) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
@@ -1086,8 +1213,9 @@ You are a premium AI shopping stylist for a fashion app called StyleSync.
 You must choose the best exact products from the provided catalog only.
 
 Goals:
-- Select products that best suit the user's body type, height category, style preference, gender, budget, preferred stores, country, currency, and occasion.
+- Select products that best suit the user's body type, body-analysis insights, height category, style preference, gender, budget, preferred stores, country, currency, and occasion.
 - Use the style learning memory to adapt recommendations based on likes, dislikes, saved shopping looks, and recent filter behavior.
+- If bodyAnalysis is present, use it strongly. Prioritize pieces that flatter the analyzed body type, support the shopping focus, and respect avoidOrBalance notes.
 - Prefer items that feel flattering, wearable, modern, everyday, and polished.
 - Avoid extreme or runway-style fashion.
 - Never recommend anything that conflicts with the user's doNotInclude preferences.
@@ -1119,6 +1247,9 @@ ${JSON.stringify(wardrobe || {}, null, 2)}
 
 Style learning memory:
 ${JSON.stringify(learningMemory || {}, null, 2)}
+
+Body analysis:
+${JSON.stringify(bodyAnalysis || {}, null, 2)}
 
 Available product catalog shortlist:
 ${JSON.stringify(productContext, null, 2)}
@@ -1297,7 +1428,15 @@ module.exports = async function handler(req, res) {
   }
 
   try {
-    const { userId, profile, filters, wardrobe, learningMemory } = req.body || {};
+    const {
+      userId,
+      profile,
+      filters,
+      wardrobe,
+      learningMemory,
+      bodyAnalysis,
+    } = req.body || {};
+
     const normalizedUserId = normalizeUserId(userId);
 
     if (!normalizedUserId) {
@@ -1331,11 +1470,14 @@ module.exports = async function handler(req, res) {
       incomingLearningMemory
     );
 
+    const normalizedBodyAnalysis = normalizeBodyAnalysis(bodyAnalysis);
+
     const shortlistedProducts = buildCatalogShortlist(
       profile || {},
       filters || {},
       Array.isArray(wardrobe) ? wardrobe : [],
-      mergedLearningMemory
+      mergedLearningMemory,
+      normalizedBodyAnalysis
     );
 
     if (shortlistedProducts.length === 0) {
@@ -1360,6 +1502,7 @@ module.exports = async function handler(req, res) {
         wardrobe: Array.isArray(wardrobe) ? wardrobe : [],
         learningMemory: mergedLearningMemory,
         shortlistedProducts,
+        bodyAnalysis: normalizedBodyAnalysis,
       });
 
       selectedProductIds = aiSelection.selectedProductIds;
@@ -1368,7 +1511,7 @@ module.exports = async function handler(req, res) {
       console.error("smart-shopping AI selection failed:", aiError);
       selectedProductIds = buildFallbackSelection(shortlistedProducts, MIN_RESULTS);
       reasoning = [
-        "These pieces were matched using your profile, selected filters, and learned shopping preferences.",
+        "These pieces were matched using your profile, body analysis, selected filters, and learned shopping preferences.",
       ];
     }
 
@@ -1441,7 +1584,7 @@ module.exports = async function handler(req, res) {
         reasoning.length > 0
           ? reasoning
           : [
-              "These pieces were chosen to match your profile, selected filters, and learned shopping preferences.",
+              "These pieces were chosen to match your profile, body analysis, selected filters, and learned shopping preferences.",
             ],
       remaining,
       limit,
