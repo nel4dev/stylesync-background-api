@@ -490,7 +490,7 @@ function normalizeArray(value) {
 }
 
 function uniqueList(arr) {
-  return [...new Set(arr)];
+  return [...new Set((arr || []).filter(Boolean))];
 }
 
 function safeNumber(value, fallback = 0) {
@@ -505,10 +505,18 @@ function ensureStringArray(value) {
   }
 
   if (typeof value === "string" && value.trim()) {
-    return [value.trim()];
+    return value
+      .split(/[\n,•,-]+/)
+      .map((item) => item.trim())
+      .filter(Boolean);
   }
 
   return [];
+}
+
+function safeString(value, fallback = "") {
+  if (value === null || value === undefined) return fallback;
+  return String(value).trim();
 }
 
 function getTodayKey() {
@@ -534,7 +542,8 @@ function getProUserIds() {
     .filter(Boolean);
 }
 
-function getUserPlan(userId) {
+function getUserPlan(userId, profile = {}) {
+  if (profile?.plan === "pro" || profile?.isPremium === true) return "pro";
   return getProUserIds().includes(userId) ? "pro" : "free";
 }
 
@@ -590,23 +599,129 @@ async function incrementUsageCount(userId, dateKey) {
   return next;
 }
 
-function convertBodyTypeToCatalogSignals(bodyType) {
+/* -----------------------------
+   BODY + COLOR NORMALIZATION
+-------------------------------- */
+
+function normalizeBodyType(bodyType) {
   const normalized = normalizeString(bodyType).replace(/^likely\s+/, "");
 
+  if (!normalized) return "";
+
+  if (normalized.includes("inverted") && normalized.includes("triangle")) {
+    return "inverted triangle";
+  }
+  if (normalized.includes("hourglass")) return "hourglass";
+  if (normalized.includes("rectangle")) return "rectangle";
+  if (normalized.includes("pear")) return "pear";
+  if (normalized.includes("apple")) return "apple";
+  if (normalized.includes("oval")) return "oval";
+  if (normalized.includes("balanced")) return "balanced shape";
+
+  return normalized;
+}
+
+function convertBodyTypeToCatalogSignals(bodyType) {
+  const normalized = normalizeBodyType(bodyType);
   if (!normalized) return [];
 
   const mapped = [normalized];
 
-  if (normalized.includes("balanced")) {
+  if (normalized === "balanced shape") {
     mapped.push("rectangle", "hourglass");
   }
 
-  if (normalized.includes("oval")) {
+  if (normalized === "oval") {
     mapped.push("apple");
   }
 
   return uniqueList(mapped);
 }
+
+function normalizeColorAnalysis(colorAnalysis = {}, profile = {}) {
+  const bestColors = uniqueList(
+    ensureStringArray(
+      colorAnalysis?.bestColors ||
+        colorAnalysis?.recommendedColors ||
+        profile?.bestColors ||
+        profile?.recommendedColors ||
+        []
+    ).map((item) => normalizeString(item))
+  );
+
+  const avoidColors = uniqueList(
+    ensureStringArray(colorAnalysis?.avoidColors || profile?.avoidColors || []).map(
+      (item) => normalizeString(item)
+    )
+  );
+
+  const neutrals = uniqueList(
+    ensureStringArray(colorAnalysis?.neutrals || []).map((item) =>
+      normalizeString(item)
+    )
+  );
+
+  const metals = uniqueList(
+    ensureStringArray(colorAnalysis?.metals || []).map((item) =>
+      normalizeString(item)
+    )
+  );
+
+  return {
+    season: safeString(colorAnalysis?.season || profile?.colorSeason || ""),
+    undertone: safeString(colorAnalysis?.undertone || profile?.undertone || ""),
+    contrastLevel: safeString(
+      colorAnalysis?.contrastLevel || profile?.contrastLevel || ""
+    ),
+    bestColors,
+    avoidColors,
+    neutrals,
+    metals,
+    styleSummary: safeString(colorAnalysis?.styleSummary || ""),
+  };
+}
+
+function normalizeBodyAnalysis(bodyAnalysis = {}, profile = {}) {
+  return {
+    bodyType: normalizeBodyType(bodyAnalysis?.bodyType || profile?.bodyType || ""),
+    fitIssues: uniqueList(
+      ensureStringArray(bodyAnalysis?.fitIssues || bodyAnalysis?.keyFitIssues || []).map(
+        (item) => normalizeString(item)
+      )
+    ),
+    shoppingFocus: uniqueList(
+      ensureStringArray(bodyAnalysis?.shoppingFocus || []).map((item) =>
+        normalizeString(item)
+      )
+    ),
+    bestClothing: uniqueList(
+      ensureStringArray(bodyAnalysis?.bestClothing || []).map((item) =>
+        normalizeString(item)
+      )
+    ),
+    bestSilhouettes: uniqueList(
+      ensureStringArray(bodyAnalysis?.bestSilhouettes || []).map((item) =>
+        normalizeString(item)
+      )
+    ),
+    avoidOrBalance: uniqueList(
+      ensureStringArray(bodyAnalysis?.avoidOrBalance || []).map((item) =>
+        normalizeString(item)
+      )
+    ),
+    goals: uniqueList(
+      ensureStringArray(bodyAnalysis?.goals || []).map((item) =>
+        normalizeString(item)
+      )
+    ),
+    mode: safeString(bodyAnalysis?.mode || ""),
+    aiHasRun: bodyAnalysis?.aiHasRun === true,
+  };
+}
+
+/* -----------------------------
+   WARDROBE SIGNALS
+-------------------------------- */
 
 function buildWardrobeCategoryCounts(wardrobe) {
   const counts = {
@@ -638,6 +753,18 @@ function getWardrobeGapCategories(wardrobe) {
     .map(([category]) => category)
     .slice(0, 3);
 }
+
+function getWardrobeColorFamilies(wardrobe = []) {
+  const colors = wardrobe
+    .map((item) => normalizeString(item?.color))
+    .filter(Boolean);
+
+  return uniqueList(colors);
+}
+
+/* -----------------------------
+   PROFILE SIGNALS
+-------------------------------- */
 
 function profileGenderToCatalogGender(profile) {
   const gender = normalizeString(profile?.gender);
@@ -699,26 +826,234 @@ function extractPreferredStores(profile, filters) {
   );
 }
 
-function extractPreferredColors(profile, learningMemory) {
+function extractPreferredColors(profile, learningMemory, colorSignals) {
   return uniqueList(
     normalizeArray(profile?.preferredColors)
       .concat(normalizeArray(profile?.colorPreferences))
       .concat(normalizeArray(profile?.colorPreference))
       .concat(normalizeArray(learningMemory?.likedColors))
+      .concat(colorSignals?.bestColors || [])
   );
 }
+
+function extractAvoidColors(profile, filters, colorSignals) {
+  return uniqueList(
+    normalizeArray(profile?.avoidColors)
+      .concat(normalizeArray(filters?.avoidColors))
+      .concat(colorSignals?.avoidColors || [])
+  );
+}
+
+/* -----------------------------
+   COLOR + FIT MATCHERS
+-------------------------------- */
+
+function productMatchesColorSignal(product, signal) {
+  const candidate = normalizeString(signal);
+  if (!candidate) return false;
+
+  const fields = [
+    normalizeString(product?.color),
+    normalizeString(product?.title),
+    ...normalizeArray(product?.styleTags),
+  ];
+
+  return fields.some((field) => field.includes(candidate));
+}
+
+function productMatchesFocusSignal(product, signal) {
+  const candidate = normalizeString(signal);
+  if (!candidate) return false;
+
+  const fields = [
+    normalizeString(product?.title),
+    normalizeString(product?.category),
+    normalizeString(product?.color),
+    ...normalizeArray(product?.fitTags),
+    ...normalizeArray(product?.styleTags),
+    ...normalizeArray(product?.occasionTags),
+  ];
+
+  return fields.some((field) => field.includes(candidate));
+}
+
+function scoreColorHarmony(product, colorSignals, wardrobeColors = []) {
+  let score = 0;
+  const reasons = [];
+
+  const bestColors = colorSignals?.bestColors || [];
+  const avoidColors = colorSignals?.avoidColors || [];
+  const neutrals = colorSignals?.neutrals || [];
+  const metals = colorSignals?.metals || [];
+
+  if (bestColors.some((color) => productMatchesColorSignal(product, color))) {
+    score += 16;
+    reasons.push("Matches your Color AI palette");
+  }
+
+  if (avoidColors.some((color) => productMatchesColorSignal(product, color))) {
+    score -= 18;
+  }
+
+  if (neutrals.some((color) => productMatchesColorSignal(product, color))) {
+    score += 6;
+  }
+
+  if (
+    metals.some((metal) => productMatchesColorSignal(product, metal)) &&
+    normalizeString(product?.category) === "accessory"
+  ) {
+    score += 5;
+  }
+
+  if (
+    wardrobeColors.length > 0 &&
+    wardrobeColors.some((color) => productMatchesColorSignal(product, color))
+  ) {
+    score += 4;
+  }
+
+  const undertone = normalizeString(colorSignals?.undertone);
+  if (undertone === "warm") {
+    if (
+      ["cream", "camel", "brown", "olive", "gold", "terracotta", "warm"].some(
+        (color) => productMatchesColorSignal(product, color)
+      )
+    ) {
+      score += 4;
+    }
+  }
+
+  if (undertone === "cool") {
+    if (
+      ["black", "white", "grey", "gray", "navy", "silver", "blue", "cool"].some(
+        (color) => productMatchesColorSignal(product, color)
+      )
+    ) {
+      score += 4;
+    }
+  }
+
+  if (normalizeString(colorSignals?.contrastLevel) === "high") {
+    if (
+      ["black", "white", "red", "cobalt", "emerald", "navy"].some((color) =>
+        productMatchesColorSignal(product, color)
+      )
+    ) {
+      score += 3;
+    }
+  }
+
+  if (normalizeString(colorSignals?.contrastLevel) === "low") {
+    if (
+      ["soft", "dusty", "muted", "cream", "taupe", "sage", "mauve"].some((color) =>
+        productMatchesColorSignal(product, color)
+      )
+    ) {
+      score += 3;
+    }
+  }
+
+  return { score, reasons };
+}
+
+function scoreBodyFit(product, bodyAnalysis) {
+  let score = 0;
+  const reasons = [];
+
+  const bodyTypes = convertBodyTypeToCatalogSignals(bodyAnalysis?.bodyType);
+  const fitIssues = normalizeArray(bodyAnalysis?.fitIssues);
+  const shoppingFocus = normalizeArray(bodyAnalysis?.shoppingFocus);
+  const bestClothing = normalizeArray(bodyAnalysis?.bestClothing);
+  const bestSilhouettes = normalizeArray(bodyAnalysis?.bestSilhouettes);
+  const avoidOrBalance = normalizeArray(bodyAnalysis?.avoidOrBalance);
+
+  const productBodyTags = normalizeArray(product?.bodyTypeTags);
+  const bodyMatches = bodyTypes.filter((type) => productBodyTags.includes(type));
+
+  if (bodyMatches.length > 0) {
+    score += bodyMatches.length * 12;
+    reasons.push("Works for your body analysis");
+  }
+
+  const focusSignals = shoppingFocus.concat(bestClothing, bestSilhouettes);
+  const focusMatches = focusSignals.filter((signal) =>
+    productMatchesFocusSignal(product, signal)
+  );
+
+  if (focusMatches.length > 0) {
+    score += Math.min(18, focusMatches.length * 6);
+    reasons.push("Supports your body fit focus");
+  }
+
+  if (avoidOrBalance.length > 0) {
+    const conflicts = avoidOrBalance.filter((signal) =>
+      productMatchesFocusSignal(product, signal)
+    );
+    if (conflicts.length > 0) {
+      score -= Math.min(14, conflicts.length * 5);
+    }
+  }
+
+  const fitTags = normalizeArray(product?.fitTags);
+  const title = normalizeString(product?.title);
+
+  if (fitIssues.includes("long torso")) {
+    if (
+      fitTags.includes("high-waist") ||
+      title.includes("high-waist") ||
+      title.includes("high waist")
+    ) {
+      score += 10;
+    }
+  }
+
+  if (fitIssues.includes("short neck")) {
+    if (
+      title.includes("v-neck") ||
+      title.includes("open") ||
+      fitTags.includes("open collar")
+    ) {
+      score += 7;
+    }
+  }
+
+  if (
+    fitIssues.includes("round midsection") ||
+    fitIssues.includes("lower belly")
+  ) {
+    if (
+      ["skimming", "straight", "soft drape", "longline", "relaxed"].some((term) =>
+        fitTags.includes(term) || title.includes(term)
+      )
+    ) {
+      score += 8;
+    }
+  }
+
+  if (fitIssues.includes("wide shoulders")) {
+    if (
+      ["soft drape", "fluid", "wide-leg"].some((term) =>
+        fitTags.includes(term) || title.includes(term)
+      )
+    ) {
+      score += 5;
+    }
+  }
+
+  return { score, reasons };
+}
+
+/* -----------------------------
+   PRODUCT SCORING
+-------------------------------- */
 
 function scoreProduct(product, context) {
   let score = 0;
   const reasons = [];
 
-  const {
-    profile,
-    wardrobe,
-    bodyAnalysis,
-    filters,
-    learningMemory,
-  } = context;
+  const { profile, wardrobe, bodyAnalysis, colorAnalysis, filters, learningMemory } =
+    context;
 
   const productGender = normalizeString(product.gender);
   const userGender = profileGenderToCatalogGender(profile);
@@ -728,13 +1063,9 @@ function scoreProduct(product, context) {
   const selectedCategory = normalizeString(filters?.selectedCategory);
   const selectedOccasion = normalizeString(filters?.selectedOccasion);
   const preferredStores = extractPreferredStores(profile, filters);
-  const preferredColors = extractPreferredColors(profile, learningMemory);
+  const preferredColors = extractPreferredColors(profile, learningMemory, colorAnalysis);
+  const avoidColors = extractAvoidColors(profile, filters, colorAnalysis);
   const styleSignals = extractProfileStyleSignals(profile);
-  const bodyTypes = convertBodyTypeToCatalogSignals(bodyAnalysis?.bodyType);
-  const fitIssues = normalizeArray(bodyAnalysis?.fitIssues);
-  const shoppingFocus = normalizeArray(bodyAnalysis?.shoppingFocus);
-  const bestClothing = normalizeArray(bodyAnalysis?.bestClothing);
-  const goals = normalizeArray(bodyAnalysis?.goals);
   const likedStores = normalizeArray(learningMemory?.likedStores);
   const dislikedStores = normalizeArray(learningMemory?.dislikedStores);
   const likedColors = normalizeArray(learningMemory?.likedColors);
@@ -744,6 +1075,7 @@ function scoreProduct(product, context) {
   const dislikedItemIds = normalizeArray(learningMemory?.dislikedItemIds);
   const likedItemIds = normalizeArray(learningMemory?.likedItemIds);
   const wardrobeGapCategories = getWardrobeGapCategories(wardrobe);
+  const wardrobeColors = getWardrobeColorFamilies(wardrobe);
 
   if (userGender && productGender === userGender) {
     score += 18;
@@ -791,17 +1123,29 @@ function scoreProduct(product, context) {
     score -= 20;
   }
 
-  if (preferredColors.some((color) => normalizeString(product.color).includes(color))) {
+  if (
+    preferredColors.some((color) => productMatchesColorSignal(product, color))
+  ) {
     score += 8;
     reasons.push("Matches your colors");
   }
 
-  if (likedColors.some((color) => normalizeString(product.color).includes(color))) {
+  if (
+    likedColors.some((color) => productMatchesColorSignal(product, color))
+  ) {
     score += 8;
   }
 
-  if (dislikedColors.some((color) => normalizeString(product.color).includes(color))) {
+  if (
+    dislikedColors.some((color) => productMatchesColorSignal(product, color))
+  ) {
     score -= 12;
+  }
+
+  if (
+    avoidColors.some((color) => productMatchesColorSignal(product, color))
+  ) {
+    score -= 14;
   }
 
   const productStyleTags = normalizeArray(product.styleTags);
@@ -809,46 +1153,6 @@ function scoreProduct(product, context) {
   if (sharedStyles.length > 0) {
     score += sharedStyles.length * 6;
     reasons.push("Matches your style");
-  }
-
-  const productBodyTags = normalizeArray(product.bodyTypeTags);
-  const bodyMatches = bodyTypes.filter((type) => productBodyTags.includes(type));
-  if (bodyMatches.length > 0) {
-    score += bodyMatches.length * 12;
-    reasons.push("Works for your body analysis");
-  }
-
-  const productFitTags = normalizeArray(product.fitTags);
-  const focusSignals = shoppingFocus.concat(bestClothing).concat(goals);
-
-  const focusMatches = focusSignals.filter((signal) => {
-    const s = normalizeString(signal);
-    return (
-      normalizeString(product.title).includes(s) ||
-      normalizeString(product.category).includes(s) ||
-      normalizeString(product.color).includes(s) ||
-      productFitTags.includes(s) ||
-      productStyleTags.includes(s)
-    );
-  });
-
-  if (focusMatches.length > 0) {
-    score += Math.min(18, focusMatches.length * 6);
-    reasons.push("Supports your shopping focus");
-  }
-
-  if (fitIssues.includes("long torso") && productFitTags.includes("high-waist")) {
-    score += 10;
-  }
-
-  if (fitIssues.includes("short neck")) {
-    if (
-      normalizeString(product.title).includes("v-neck") ||
-      normalizeString(product.title).includes("open") ||
-      productFitTags.includes("open collar")
-    ) {
-      score += 7;
-    }
   }
 
   if (likedCategories.includes(normalizeString(product.category))) {
@@ -871,6 +1175,14 @@ function scoreProduct(product, context) {
     score += 12;
     reasons.push("Helps balance your wardrobe");
   }
+
+  const bodyScore = scoreBodyFit(product, bodyAnalysis);
+  score += bodyScore.score;
+  reasons.push(...bodyScore.reasons);
+
+  const colorScore = scoreColorHarmony(product, colorAnalysis, wardrobeColors);
+  score += colorScore.score;
+  reasons.push(...colorScore.reasons);
 
   const minBudget =
     typeof filters?.minBudget === "number" ? filters.minBudget : undefined;
@@ -896,9 +1208,13 @@ function scoreProduct(product, context) {
   };
 }
 
+/* -----------------------------
+   REASONING
+-------------------------------- */
+
 function buildReasoning(scoredResults, context) {
   const reasoning = [];
-  const { filters, bodyAnalysis, wardrobe, profile } = context;
+  const { filters, bodyAnalysis, colorAnalysis, wardrobe, profile } = context;
   const wardrobeGapCategories = getWardrobeGapCategories(wardrobe);
   const preferredStores = extractPreferredStores(profile, filters);
 
@@ -913,6 +1229,20 @@ function buildReasoning(scoredResults, context) {
       `Used your shopping focus: ${normalizeArray(bodyAnalysis.shoppingFocus)
         .slice(0, 2)
         .join(" and ")}.`
+    );
+  }
+
+  if (normalizeString(colorAnalysis?.season)) {
+    reasoning.push(
+      `Used your Color AI season: ${String(colorAnalysis.season).trim()}.`
+    );
+  }
+
+  if (normalizeArray(colorAnalysis?.bestColors).length > 0) {
+    reasoning.push(
+      `Boosted colors from your palette: ${normalizeArray(colorAnalysis.bestColors)
+        .slice(0, 3)
+        .join(", ")}.`
     );
   }
 
@@ -954,6 +1284,10 @@ function buildReasoning(scoredResults, context) {
   return uniqueList(reasoning).slice(0, 6);
 }
 
+/* -----------------------------
+   AI RERANK
+-------------------------------- */
+
 function buildAiShortlistPayload(items) {
   return items.map((item) => ({
     id: item.id,
@@ -968,6 +1302,7 @@ function buildAiShortlistPayload(items) {
     bodyTypeTags: item.bodyTypeTags,
     occasionTags: item.occasionTags,
     score: item._score,
+    reasons: item._reasons,
   }));
 }
 
@@ -1032,6 +1367,7 @@ You are the product ranking layer for StyleSync, a fashion AI app.
 You will receive:
 - user profile
 - body analysis
+- color analysis
 - shopping filters
 - learning memory
 - a shortlist of candidate products already scored by the backend
@@ -1039,6 +1375,8 @@ You will receive:
 Task:
 - pick the strongest final items for the user
 - prefer items that are realistic, wearable, and aligned with body analysis
+- prefer items that harmonize with the user's color season, undertone, and best colors
+- avoid items that conflict with avoid colors or explicit exclusions
 - prefer exact filter matches
 - preserve store/category/style diversity when possible
 - do not choose products that clearly conflict with the profile or filters
@@ -1063,6 +1401,7 @@ Return ONLY valid JSON in this exact shape:
                 prompt,
                 profile: context.profile || {},
                 bodyAnalysis: context.bodyAnalysis || {},
+                colorAnalysis: context.colorAnalysis || {},
                 filters: context.filters || {},
                 learningMemory: context.learningMemory || {},
                 shortlist: buildAiShortlistPayload(shortlist),
@@ -1099,12 +1438,18 @@ Return ONLY valid JSON in this exact shape:
   }
 
   return {
-    selectedIds: parsed.selectedIds.map((id) => String(id || "").trim()).filter(Boolean),
+    selectedIds: parsed.selectedIds
+      .map((id) => String(id || "").trim())
+      .filter(Boolean),
     reasoning: Array.isArray(parsed.reasoning)
       ? parsed.reasoning.map((item) => String(item || "").trim()).filter(Boolean)
       : [],
   };
 }
+
+/* -----------------------------
+   RESPONSE NORMALIZATION
+-------------------------------- */
 
 function normalizeResponseItem(item) {
   return {
@@ -1153,6 +1498,7 @@ module.exports = async function handler(req, res) {
       profile = {},
       wardrobe = [],
       bodyAnalysis = {},
+      colorAnalysis = {},
       filters = {},
       learningMemory = {},
     } = req.body || {};
@@ -1167,7 +1513,7 @@ module.exports = async function handler(req, res) {
     }
 
     const todayKey = getTodayKey();
-    const plan = getUserPlan(normalizedUserId);
+    const plan = getUserPlan(normalizedUserId, profile);
     const limit = getPlanLimit(plan);
     const currentCount = await getUsageCount(normalizedUserId, todayKey);
 
@@ -1184,20 +1530,27 @@ module.exports = async function handler(req, res) {
       });
     }
 
-    const doNotInclude = ensureStringArray(filters?.doNotInclude).concat(
-      ensureStringArray(profile?.doNotInclude)
+    const mergedDoNotInclude = uniqueList(
+      ensureStringArray(filters?.doNotInclude).concat(
+        ensureStringArray(profile?.doNotInclude),
+        ensureStringArray(profile?.excludedPreferences)
+      )
     );
+
+    const normalizedBodyAnalysis = normalizeBodyAnalysis(bodyAnalysis, profile);
+    const normalizedColorAnalysis = normalizeColorAnalysis(colorAnalysis, profile);
 
     const context = {
       profile,
       wardrobe,
-      bodyAnalysis,
+      bodyAnalysis: normalizedBodyAnalysis,
+      colorAnalysis: normalizedColorAnalysis,
       filters,
       learningMemory,
     };
 
     let catalog = MOCK_STORE_CATALOG.filter(
-      (item) => !matchesDoNotInclude(item, doNotInclude)
+      (item) => !matchesDoNotInclude(item, mergedDoNotInclude)
     );
 
     const selectedStores = normalizeArray(filters?.selectedStores);
