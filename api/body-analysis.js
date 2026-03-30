@@ -135,7 +135,7 @@ What each field means:
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
       },
       body: JSON.stringify({
-        model: "gpt-4.1",
+        model: process.env.OPENAI_BODY_ANALYSIS_MODEL || "gpt-4.1-mini",
         input: [
           {
             role: "user",
@@ -154,7 +154,14 @@ What each field means:
       }),
     });
 
-    const data = await openAiResponse.json();
+    const rawText = await openAiResponse.text();
+
+let data = {};
+try {
+  data = rawText ? JSON.parse(rawText) : {};
+} catch {
+  data = {};
+}
 
     if (!openAiResponse.ok) {
       return res.status(500).json({
